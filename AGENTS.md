@@ -14,14 +14,19 @@ npm workspaces monorepo orchestrated by Turborepo.
 
 ```
 budget-fi/
-├── package.json       # Workspace root (apps/*), turbo scripts
+├── package.json       # Workspace root (apps/*, packages/*), turbo scripts
 ├── turbo.json         # Task pipeline: build, dev, lint, typecheck
 ├── apps/
 │   ├── web/           # React 19 + Vite + TypeScript frontend (oxlint for linting)
 │   │   └── src/       # main.tsx, App.tsx (currently the Vite starter template)
 │   └── api/           # Express 5 + TypeScript server
 │       └── src/       # index.ts (currently only GET /health)
+└── packages/
+    └── ui/            # @budget-fi/ui: shared component library (currently empty)
+        └── src/       # index.ts is the public entry point
 ```
+
+**Shared component library:** reusable UI components belong in `packages/` (starting with `packages/ui`), not inside an app. The web interface and the planned mobile apps both consume it, so components there should avoid web-only assumptions where practical. The mobile approach (installable PWA vs. Capacitor wrapper) is still an open question in the spec. Apps import it as `@budget-fi/ui`.
 
 ## Commands
 
