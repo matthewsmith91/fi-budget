@@ -67,7 +67,7 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
   return {
     async listAccounts() {
       const rows = await adapter.query<AccountRow & Record<string, never>>(
-        `${SELECT} ORDER BY created_at, rowid`,
+        `${SELECT} ORDER BY created_at, id`,
       )
       return rows.map(toAccount)
     },

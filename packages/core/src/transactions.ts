@@ -196,7 +196,7 @@ export async function loadTransactions(
     `SELECT id, account_id, date, payee, amount, cleared, reconciled, transfer_pair_id,
        (SELECT p.account_id FROM transactions p
          WHERE p.transfer_pair_id = t.transfer_pair_id AND p.id <> t.id) AS transfer_account_id
-     FROM transactions t ${where} ORDER BY date DESC, rowid DESC`,
+     FROM transactions t ${where} ORDER BY date DESC, created_at DESC, id DESC`,
     params,
   )
   if (rows.length === 0) return []
@@ -489,7 +489,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
            COALESCE(SUM(t.amount), 0) AS balance,
            COALESCE(SUM(CASE WHEN t.cleared = 1 THEN t.amount END), 0) AS cleared
          FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id
-         GROUP BY a.id ORDER BY a.created_at, a.rowid`,
+         GROUP BY a.id ORDER BY a.created_at, a.id`,
       )
       return rows.map((r) => ({ accountId: r.id, balance: r.balance, cleared: r.cleared }))
     },

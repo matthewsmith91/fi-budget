@@ -81,7 +81,7 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     )
     if (!h) return null
     const members = await adapter.query<{ id: string; display_name: string }>(
-      'SELECT id, display_name FROM members WHERE household_id = ? ORDER BY created_at, rowid',
+      'SELECT id, display_name FROM members WHERE household_id = ? ORDER BY created_at, id',
       [h.id],
     )
     return {

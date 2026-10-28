@@ -181,7 +181,7 @@ export async function monthBalances(db: SqlRunner, month: Month): Promise<Catego
   const rolled = await rollCategories(db, month)
   const categories = await db.query<{ id: string }>(
     `SELECT c.id AS id FROM categories c JOIN category_groups g ON g.id = c.group_id
-     ORDER BY g.sort, g.rowid, c.sort, c.rowid`,
+     ORDER BY g.sort, g.created_at, g.id, c.sort, c.created_at, c.id`,
   )
   return categories.map(({ id }) => {
     const r = rolled.get(id)
@@ -296,7 +296,7 @@ export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps):
       }
       const rows = await adapter.query<AllocationRow & Record<string, never>>(
         `SELECT id, month, category_id, goal_id, amount, source, note, created_at FROM allocations
-         ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY rowid`,
+         ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at, id`,
         params,
       )
       return rows.map(toAllocation)

@@ -78,6 +78,7 @@ The service worker only exists in production builds, so test PWA behavior with `
 - Each on-budget credit card has a payment category (`categories.credit_card_account_id`, id `payment-<accountId>`, in the `credit-card-payments` group). Its activity is derived in `rollCategories`: card purchases add to it, refunds and payments (transfers into the card) draw it down. It is managed by the card: no rename, delete or transaction use. Purchases move in full, even past the spending category's balance; that shortfall is cash overspending and comes out of the next month's Ready to Assign.
 - Reconciling locks every cleared transaction in an account and posts an uncategorized cleared adjustment if the bank balance differs; locked transactions can't be edited or deleted.
 - The activity feed is derived from the `messages` log, not stored. Messages carry no write id, so `activity.ts` splits a row's messages into actions at a delete, at `created_at` (the last column of every insert) and at a repeated column. Who made a change comes from the `devices` row (synced) that ties a device id to a member.
+- Lists must sort deterministically across devices: break ties with `created_at, id`, never `rowid` (rowid is arrival order on one device, so two devices would show the same rows in different order). Transaction splits are the exception until they get a sort column.
 - Money is **integer cents** in the database and the client. Never use floats for amounts; rounding remainders fall to Ready to Assign.
 
 **Stack (per spec)**

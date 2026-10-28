@@ -81,7 +81,7 @@ const CATEGORY_SELECT =
 
 async function categoriesIn(db: SqlRunner, groupId: string): Promise<Category[]> {
   const rows = await db.query<CategoryRow & Record<string, never>>(
-    `${CATEGORY_SELECT} WHERE group_id = ? ORDER BY sort, rowid`,
+    `${CATEGORY_SELECT} WHERE group_id = ? ORDER BY sort, created_at, id`,
     [groupId],
   )
   return rows.map(toCategory)
@@ -211,11 +211,11 @@ export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): 
     async listCategoryGroups() {
       return adapter.transaction(async (tx) => {
         const groups = await tx.query<GroupRow & Record<string, never>>(
-          'SELECT id, name, hidden FROM category_groups ORDER BY sort, rowid',
+          'SELECT id, name, hidden FROM category_groups ORDER BY sort, created_at, id',
         )
         const categories = (
           await tx.query<CategoryRow & Record<string, never>>(
-            `${CATEGORY_SELECT} ORDER BY sort, rowid`,
+            `${CATEGORY_SELECT} ORDER BY sort, created_at, id`,
           )
         ).map(toCategory)
         return groups.map((g) => ({
