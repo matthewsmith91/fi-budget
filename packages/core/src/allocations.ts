@@ -27,7 +27,11 @@ export interface CategoryBalance {
   assigned: number
   /** Net of this month's spending (negative) and refunds (positive) from on-budget accounts. */
   activity: number
-  /** Everything ever assigned to the category, plus all activity, through the end of this month. */
+  /**
+   * What the envelope holds at the end of this month. A month starts with the previous
+   * month's available when that was positive; cash overspending does not carry (it is
+   * taken from Ready to Assign instead), so a category never starts a month negative.
+   */
   available: number
 }
 
@@ -53,10 +57,11 @@ export interface AllocationsApi {
   /** Assigned, activity and available for every category, in display order. */
   getMonthBalances(month: Month): Promise<CategoryBalance[]>
   /**
-   * Money in on-budget accounts that no envelope holds yet. Overspent categories count as
-   * zero, so cash overspending lowers it. Negative means more is assigned than exists.
+   * Income through the end of `month` that no envelope holds yet. Cash overspending in an
+   * earlier month comes out of it; overspending in `month` itself shows up next month.
+   * Negative means more is assigned than exists.
    */
-  getReadyToAssign(): Promise<number>
+  getReadyToAssign(month: Month): Promise<number>
 }
 
 interface AllocationRow {
@@ -103,55 +108,93 @@ async function assertCategoryExists(db: SqlRunner, id: string) {
 
 const cleanNote = (note: string | undefined) => note?.trim() || null
 
-export async function monthBalances(db: SqlRunner, month: Month): Promise<CategoryBalance[]> {
-  assertMonth(month)
-  // Activity counts only splits that carry a category, on on-budget accounts. Bounds on
-  // the date are inclusive of the whole month because dates are YYYY-MM-DD strings.
-  const activityIn = (cmp: '=' | '<=') => `
-    COALESCE((SELECT SUM(s.amount) FROM transaction_splits s
-      JOIN transactions t ON t.id = s.transaction_id
-      JOIN accounts a ON a.id = t.account_id
-      WHERE s.category_id = c.id AND a.on_budget = 1 AND substr(t.date, 1, 7) ${cmp} ?1), 0)`
-  const assignedIn = (cmp: '=' | '<=') => `
-    COALESCE((SELECT SUM(l.amount) FROM allocations l
-      WHERE l.category_id = c.id AND l.month ${cmp} ?1), 0)`
-  const rows = await db.query<{
-    id: string
-    assigned: number
-    activity: number
-    available: number
-  }>(
-    `SELECT c.id AS id,
-       ${assignedIn('=')} AS assigned,
-       ${activityIn('=')} AS activity,
-       ${assignedIn('<=')} + ${activityIn('<=')} AS available
-     FROM categories c JOIN category_groups g ON g.id = c.group_id
-     ORDER BY g.sort, g.rowid, c.sort, c.rowid`,
-    [month],
-  )
-  return rows.map((r) => ({
-    categoryId: r.id,
-    assigned: r.assigned,
-    activity: r.activity,
-    available: r.available,
-  }))
+interface Rolled {
+  assigned: number
+  activity: number
+  available: number
+  /** Cash overspending left behind by months before the one asked for. */
+  overspent: number
 }
 
-export async function readyToAssign(db: SqlRunner): Promise<number> {
-  const [row] = await db.query<{ rta: number }>(
-    `SELECT
-       COALESCE((SELECT SUM(t.amount) FROM transactions t
-         JOIN accounts a ON a.id = t.account_id WHERE a.on_budget = 1), 0)
-       - COALESCE((SELECT SUM(MAX(available, 0)) FROM (
-           SELECT
-             COALESCE((SELECT SUM(l.amount) FROM allocations l WHERE l.category_id = c.id), 0)
-             + COALESCE((SELECT SUM(s.amount) FROM transaction_splits s
-                 JOIN transactions t ON t.id = s.transaction_id
-                 JOIN accounts a ON a.id = t.account_id
-                 WHERE s.category_id = c.id AND a.on_budget = 1), 0) AS available
-           FROM categories c)), 0) AS rta`,
+/**
+ * Rolls every category forward month by month up to `month`. A month opens with the last
+ * month's available if it was positive; if it was negative the shortfall is counted as
+ * overspent (it reduces Ready to Assign) and the category starts again from zero. Months
+ * with no entries cannot overspend, so only months that have rows need visiting.
+ */
+async function rollCategories(db: SqlRunner, month: Month): Promise<Map<string, Rolled>> {
+  // Activity counts only splits that carry a category, on on-budget accounts.
+  const rows = await db.query<{
+    category_id: string
+    month: string
+    assigned: number
+    activity: number
+  }>(
+    `SELECT category_id, month, SUM(assigned) AS assigned, SUM(activity) AS activity FROM (
+       SELECT category_id, month, amount AS assigned, 0 AS activity
+         FROM allocations WHERE month <= ?1
+       UNION ALL
+       SELECT s.category_id, substr(t.date, 1, 7), 0, s.amount
+         FROM transaction_splits s
+         JOIN transactions t ON t.id = s.transaction_id
+         JOIN accounts a ON a.id = t.account_id
+         WHERE s.category_id IS NOT NULL AND a.on_budget = 1 AND substr(t.date, 1, 7) <= ?1
+     ) GROUP BY category_id, month ORDER BY category_id, month`,
+    [month],
   )
-  return row?.rta ?? 0
+  const out = new Map<string, Rolled>()
+  for (const r of rows) {
+    const cat = out.get(r.category_id) ?? { assigned: 0, activity: 0, available: 0, overspent: 0 }
+    out.set(r.category_id, cat)
+    const available = cat.available + r.assigned + r.activity
+    if (r.month === month) {
+      cat.assigned = r.assigned
+      cat.activity = r.activity
+      cat.available = available
+    } else {
+      cat.overspent += Math.max(-available, 0)
+      cat.available = Math.max(available, 0)
+    }
+  }
+  return out
+}
+
+export async function monthBalances(db: SqlRunner, month: Month): Promise<CategoryBalance[]> {
+  assertMonth(month)
+  const rolled = await rollCategories(db, month)
+  const categories = await db.query<{ id: string }>(
+    `SELECT c.id AS id FROM categories c JOIN category_groups g ON g.id = c.group_id
+     ORDER BY g.sort, g.rowid, c.sort, c.rowid`,
+  )
+  return categories.map(({ id }) => {
+    const r = rolled.get(id)
+    return {
+      categoryId: id,
+      assigned: r?.assigned ?? 0,
+      activity: r?.activity ?? 0,
+      available: r?.available ?? 0,
+    }
+  })
+}
+
+export async function readyToAssign(db: SqlRunner, month: Month): Promise<number> {
+  assertMonth(month)
+  // Income is every uncategorized split on an on-budget account, so an uncategorized
+  // outflow lowers it too.
+  const [income] = await db.query<{ total: number }>(
+    `SELECT COALESCE(SUM(s.amount), 0) AS total FROM transaction_splits s
+       JOIN transactions t ON t.id = s.transaction_id
+       JOIN accounts a ON a.id = t.account_id
+       WHERE s.category_id IS NULL AND a.on_budget = 1 AND substr(t.date, 1, 7) <= ?`,
+    [month],
+  )
+  const [assigned] = await db.query<{ total: number }>(
+    'SELECT COALESCE(SUM(amount), 0) AS total FROM allocations WHERE month <= ?',
+    [month],
+  )
+  let overspent = 0
+  for (const r of (await rollCategories(db, month)).values()) overspent += r.overspent
+  return (income?.total ?? 0) - (assigned?.total ?? 0) - overspent
 }
 
 export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps): AllocationsApi {
@@ -242,6 +285,6 @@ export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps):
       return rows.map(toAllocation)
     },
     getMonthBalances: (month) => adapter.transaction((tx) => monthBalances(tx, month)),
-    getReadyToAssign: () => adapter.transaction((tx) => readyToAssign(tx)),
+    getReadyToAssign: (month) => adapter.transaction((tx) => readyToAssign(tx, month)),
   }
 }

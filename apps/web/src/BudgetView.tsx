@@ -27,7 +27,7 @@ export function BudgetView({ today }: { today: Date }) {
   const [month, setMonth] = useState(() => monthOf(todayIso(today)))
   const groups = useBudgetQuery(() => budget.listCategoryGroups())
   const balances = useBudgetQuery(() => budget.getMonthBalances(month), [month])
-  const readyToAssign = useBudgetQuery(() => budget.getReadyToAssign())
+  const readyToAssign = useBudgetQuery(() => budget.getReadyToAssign(month), [month])
   const [showHidden, setShowHidden] = useState(false)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [addingGroup, setAddingGroup] = useState(false)

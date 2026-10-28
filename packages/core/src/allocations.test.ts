@@ -193,6 +193,172 @@ describe('month balances', () => {
   })
 })
 
+describe('month rollover', () => {
+  it('carries a positive balance into later months, including months with no entries', async () => {
+    const { api, food, checking, spend } = await makeApi()
+    await api.allocate({ month: '2026-01', categoryId: food.id, amount: 50000 })
+    await spend(checking.id, '2026-01-10', food.id, -20000)
+    expect(balance(await api.getMonthBalances('2026-04'), food.id)).toEqual({
+      categoryId: food.id,
+      assigned: 0,
+      activity: 0,
+      available: 30000,
+    })
+  })
+
+  it('does not carry cash overspending: the category starts the next month at zero', async () => {
+    const { api, food, checking, spend } = await makeApi()
+    await api.allocate({ month: '2026-01', categoryId: food.id, amount: 10000 })
+    await spend(checking.id, '2026-01-10', food.id, -15000)
+    expect(balance(await api.getMonthBalances('2026-01'), food.id)?.available).toBe(-5000)
+    expect(balance(await api.getMonthBalances('2026-02'), food.id)?.available).toBe(0)
+    expect(balance(await api.getMonthBalances('2026-06'), food.id)?.available).toBe(0)
+    // new money in February is not eaten by January's shortfall
+    await api.allocate({ month: '2026-02', categoryId: food.id, amount: 8000 })
+    expect(balance(await api.getMonthBalances('2026-02'), food.id)?.available).toBe(8000)
+  })
+
+  it('can overspend again after a reset', async () => {
+    const { api, food, checking, spend } = await makeApi()
+    await spend(checking.id, '2026-01-10', food.id, -1000)
+    await spend(checking.id, '2026-02-10', food.id, -2000)
+    expect(balance(await api.getMonthBalances('2026-02'), food.id)).toMatchObject({
+      activity: -2000,
+      available: -2000,
+    })
+  })
+
+  it('a refund in the month after an overspend only lifts the new month', async () => {
+    const { api, food, checking, spend } = await makeApi()
+    await spend(checking.id, '2026-01-10', food.id, -4000)
+    await spend(checking.id, '2026-02-05', food.id, 1500)
+    expect(balance(await api.getMonthBalances('2026-02'), food.id)?.available).toBe(1500)
+  })
+
+  it('rolls each category on its own', async () => {
+    const { api, rent, food, checking, spend } = await makeApi()
+    await api.allocate({ month: '2026-01', categoryId: rent.id, amount: 90000 })
+    await spend(checking.id, '2026-01-01', food.id, -700)
+    const feb = await api.getMonthBalances('2026-02')
+    expect(balance(feb, rent.id)?.available).toBe(90000)
+    expect(balance(feb, food.id)?.available).toBe(0)
+  })
+})
+
+describe('ready to assign by month', () => {
+  async function funded() {
+    const ctx = await makeApi()
+    await spend(ctx, '2026-01-01', null, 300000)
+    return ctx
+  }
+  const spend = async (
+    ctx: Awaited<ReturnType<typeof makeApi>>,
+    date: string,
+    categoryId: string | null,
+    amount: number,
+  ) => ctx.spend(ctx.checking.id, date, categoryId, amount)
+
+  it('only counts income that has arrived by that month', async () => {
+    const ctx = await funded()
+    await spend(ctx, '2026-02-01', null, 100000)
+    expect(await ctx.api.getReadyToAssign('2025-12')).toBe(0)
+    expect(await ctx.api.getReadyToAssign('2026-01')).toBe(300000)
+    expect(await ctx.api.getReadyToAssign('2026-02')).toBe(400000)
+  })
+
+  it('subtracts everything assigned through the month, not just the month’s own', async () => {
+    const { api, food, rent } = await funded()
+    await api.allocate({ month: '2026-01', categoryId: rent.id, amount: 100000 })
+    await api.allocate({ month: '2026-02', categoryId: food.id, amount: 20000 })
+    expect(await api.getReadyToAssign('2026-01')).toBe(200000)
+    expect(await api.getReadyToAssign('2026-02')).toBe(180000)
+    expect(await api.getReadyToAssign('2026-03')).toBe(180000)
+  })
+
+  it('moving money between categories never changes it', async () => {
+    const { api, food, rent } = await funded()
+    await api.allocate({ month: '2026-01', categoryId: rent.id, amount: 100000 })
+    await api.moveAllocation({
+      month: '2026-01',
+      fromCategoryId: rent.id,
+      toCategoryId: food.id,
+      amount: 25000,
+    })
+    expect(await api.getReadyToAssign('2026-01')).toBe(200000)
+  })
+
+  it('counts a negative allocation as money returned to it', async () => {
+    const { api, food } = await funded()
+    await api.allocate({ month: '2026-01', categoryId: food.id, amount: 50000 })
+    await api.allocate({ month: '2026-01', categoryId: food.id, amount: -20000 })
+    expect(await api.getReadyToAssign('2026-01')).toBe(270000)
+  })
+
+  it('goes negative when more is assigned than has arrived', async () => {
+    const { api, food } = await funded()
+    await api.allocate({ month: '2026-01', categoryId: food.id, amount: 350000 })
+    expect(await api.getReadyToAssign('2026-01')).toBe(-50000)
+  })
+
+  it('charges a cash overspend to the next month once, however many months pass', async () => {
+    const ctx = await funded()
+    await ctx.api.allocate({ month: '2026-01', categoryId: ctx.food.id, amount: 10000 })
+    await spend(ctx, '2026-01-20', ctx.food.id, -15000)
+    expect(await ctx.api.getReadyToAssign('2026-01')).toBe(290000)
+    expect(await ctx.api.getReadyToAssign('2026-02')).toBe(285000)
+    expect(await ctx.api.getReadyToAssign('2026-09')).toBe(285000)
+  })
+
+  it('charges two consecutive overspends separately', async () => {
+    const ctx = await funded()
+    await spend(ctx, '2026-01-20', ctx.food.id, -1000)
+    await spend(ctx, '2026-02-20', ctx.food.id, -2000)
+    expect(await ctx.api.getReadyToAssign('2026-01')).toBe(300000)
+    expect(await ctx.api.getReadyToAssign('2026-02')).toBe(299000)
+    expect(await ctx.api.getReadyToAssign('2026-03')).toBe(297000)
+  })
+
+  it('does not charge spending that an envelope covers', async () => {
+    const ctx = await funded()
+    await ctx.api.allocate({ month: '2026-01', categoryId: ctx.food.id, amount: 20000 })
+    await spend(ctx, '2026-02-10', ctx.food.id, -15000)
+    expect(await ctx.api.getReadyToAssign('2026-02')).toBe(280000)
+  })
+
+  it('covering an overspent month later swaps the charge for an assignment', async () => {
+    const ctx = await funded()
+    await spend(ctx, '2026-01-20', ctx.food.id, -5000)
+    expect(await ctx.api.getReadyToAssign('2026-02')).toBe(295000)
+    await ctx.api.allocate({ month: '2026-01', categoryId: ctx.food.id, amount: 5000 })
+    // the same 50.00 now sits in the category (and was spent) instead of being charged
+    expect(await ctx.api.getReadyToAssign('2026-02')).toBe(295000)
+    const jan = await ctx.api.getMonthBalances('2026-01')
+    expect(balance(jan, ctx.food.id)?.available).toBe(0)
+  })
+
+  it('treats an uncategorized outflow as reducing it, and a refund as an envelope credit', async () => {
+    const ctx = await funded()
+    await spend(ctx, '2026-01-05', null, -4000)
+    await spend(ctx, '2026-01-06', ctx.food.id, 2500)
+    // the refund belongs to Food, so it does not come back as Ready to Assign
+    expect(await ctx.api.getReadyToAssign('2026-01')).toBe(296000)
+    expect(balance(await ctx.api.getMonthBalances('2026-01'), ctx.food.id)?.available).toBe(2500)
+  })
+
+  it('ignores tracking accounts', async () => {
+    const ctx = await funded()
+    const brokerage = await ctx.api.createAccount({ name: 'Brokerage', type: 'investment' })
+    await ctx.spend(brokerage.id, '2026-01-01', null, 900000)
+    await ctx.spend(brokerage.id, '2026-01-02', ctx.food.id, -900000)
+    expect(await ctx.api.getReadyToAssign('2026-02')).toBe(300000)
+  })
+
+  it('rejects a malformed month', async () => {
+    const { api } = await makeApi()
+    await expect(api.getReadyToAssign('2026-13')).rejects.toThrow(/month/)
+  })
+})
+
 describe('deleting things with history', () => {
   it('refuses to delete a category with allocations or spending, and an account with transactions', async () => {
     const { api, rent, food, checking, spend } = await makeApi()

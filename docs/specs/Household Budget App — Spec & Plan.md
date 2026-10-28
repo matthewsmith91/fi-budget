@@ -216,7 +216,7 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 - [x] Accounts, category groups and categories CRUD
 - [x] Change-message layer: every write produces a message with an HLC timestamp (ready for sync, works without it)
 - [x] Allocations ledger and balance queries (assigned, activity, available)
-- [ ] Ready to Assign and month rollover logic, with tests
+- [x] Ready to Assign and month rollover logic, with tests
 - [ ] Transactions and splits, manual entry on mobile and web
 - [ ] Transfers between accounts (paired transactions)
 - [ ] Credit card payment categories: purchase moves funds to the card's category

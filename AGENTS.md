@@ -72,6 +72,7 @@ The service worker only exists in production builds, so test PWA behavior with `
 - Category balance = its own allocations + the sum of its goals' balances − spending.
 - Envelopes held in an account can never add up to more than that account's balance.
 - Spending from a goal is a planned draw-down, never flagged as overspending.
+- Months roll over: a category opens a month with last month's available if positive; cash overspending does not carry, it comes out of the next month's Ready to Assign (`rollCategories` in `allocations.ts`).
 - Investment accounts are tracking accounts: in net worth and goals, not in the monthly budget.
 - Money is **integer cents** in the database and the client. Never use floats for amounts; rounding remainders fall to Ready to Assign.
 

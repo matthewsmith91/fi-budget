@@ -182,15 +182,15 @@ describe('transactions', () => {
 describe('ready to assign', () => {
   it('is zero for an empty budget', async () => {
     const { api } = await makeApi()
-    expect(await api.getReadyToAssign()).toBe(0)
+    expect(await api.getReadyToAssign('2026-01')).toBe(0)
   })
 
   it('counts uncategorized inflows as income and subtracts what is assigned', async () => {
     const { api, checking, rent } = await makeApi()
     await api.createTransaction({ accountId: checking.id, date: '2026-01-01', amount: 300000 })
-    expect(await api.getReadyToAssign()).toBe(300000)
+    expect(await api.getReadyToAssign('2026-01')).toBe(300000)
     await api.allocate({ month: '2026-01', categoryId: rent.id, amount: 120000 })
-    expect(await api.getReadyToAssign()).toBe(180000)
+    expect(await api.getReadyToAssign('2026-01')).toBe(180000)
   })
 
   it('does not change when money is spent from an envelope that holds it', async () => {
@@ -203,10 +203,10 @@ describe('ready to assign', () => {
       categoryId: rent.id,
       amount: -120000,
     })
-    expect(await api.getReadyToAssign()).toBe(180000)
+    expect(await api.getReadyToAssign('2026-01')).toBe(180000)
   })
 
-  it('lets cash overspending lower it', async () => {
+  it('takes cash overspending out of the next month, not the month it happened in', async () => {
     const { api, checking, food } = await makeApi()
     await api.createTransaction({ accountId: checking.id, date: '2026-01-01', amount: 300000 })
     await api.allocate({ month: '2026-01', categoryId: food.id, amount: 10000 })
@@ -216,13 +216,14 @@ describe('ready to assign', () => {
       categoryId: food.id,
       amount: -15000,
     })
+    expect(await api.getReadyToAssign('2026-01')).toBe(300000 - 10000)
     // food is 50.00 overspent: the 100.00 it held is gone and 50.00 more left the account
-    expect(await api.getReadyToAssign()).toBe(300000 - 15000)
+    expect(await api.getReadyToAssign('2026-02')).toBe(300000 - 15000)
   })
 
   it('ignores tracking accounts', async () => {
     const { api, brokerage } = await makeApi()
     await api.createTransaction({ accountId: brokerage.id, date: '2026-01-01', amount: 900000 })
-    expect(await api.getReadyToAssign()).toBe(0)
+    expect(await api.getReadyToAssign('2026-01')).toBe(0)
   })
 })
