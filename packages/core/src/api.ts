@@ -10,6 +10,7 @@ import {
   createSyncEngine,
   SyncError,
   type SyncResult,
+  type SyncSetup,
   type SyncStatus,
   type SyncTransport,
 } from './sync.ts'
@@ -45,6 +46,13 @@ export interface BudgetApi extends AccountsApi, CategoriesApi, AllocationsApi, T
   /** Pushes local changes to the server and merges what the other devices sent. */
   syncNow(): Promise<SyncResult>
   getSyncStatus(): Promise<SyncStatus>
+  /** What turning on sync here would do: upload this budget, download the household's, or clash. */
+  getSyncSetup(): Promise<SyncSetup>
+  /**
+   * Replaces this device's budget with the server's full file and brings it up to date.
+   * The returned image is this device's budget as it was, in case it should be kept.
+   */
+  downloadServerBudget(): Promise<ImportResult & { sync: SyncResult }>
 }
 
 export interface ApiDeps {
@@ -131,6 +139,16 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     },
     async getSyncStatus() {
       return sync ? sync.status() : { pending: 0, lastSyncAt: null }
+    },
+    async getSyncSetup() {
+      if (!sync) throw new SyncError('Sync is not available on this device')
+      return sync.setup()
+    },
+    async downloadServerBudget() {
+      if (!sync) throw new SyncError('Sync is not available on this device')
+      const safetyBackup = await adapter.exportFile()
+      await sync.downloadFile()
+      return { safetyBackup, sync: await sync.sync() }
     },
     async importJson(text) {
       const safetyBackup = await adapter.exportFile()

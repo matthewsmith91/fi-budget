@@ -1,3 +1,4 @@
+import { importSqlite } from './budget-file.ts'
 import { DELETED_COLUMN, type ChangeMessage, type ChangeValue } from './changes.ts'
 import { MAX_DRIFT_MS, parseHlc } from './hlc.ts'
 import { diffTries, emptyTrie, insertTimestamp, isTrie, type TrieNode } from './merkle.ts'
@@ -204,6 +205,20 @@ export interface SyncResponse {
   hasMore: boolean
   /** Root hash of the server's trie after storing this push. */
   root: number
+  /** The log position the server's full budget file contains, or null if it has none. */
+  fileCursor: number | null
+}
+
+export interface ServerFileInfo {
+  cursor: number
+  size: number
+  createdAt: string
+}
+
+/** What the server holds: how many messages, and the latest full budget file if any. */
+export interface ServerInfo {
+  messages: number
+  file: ServerFileInfo | null
 }
 
 export interface RangePage {
@@ -217,6 +232,11 @@ export interface SyncTransport {
   sync(request: SyncRequest): Promise<SyncResponse>
   trie(): Promise<TrieNode>
   messagesFrom(from: string, after: number): Promise<RangePage>
+  info(): Promise<ServerInfo>
+  /** The full budget file and the log position it contains; null if the server has none. */
+  downloadFile(): Promise<{ bytes: Uint8Array; cursor: number } | null>
+  /** Offers a full budget file that contains the log up to `cursor`. */
+  uploadFile(bytes: Uint8Array, cursor: number): Promise<void>
 }
 
 export interface SyncResult {
@@ -227,6 +247,19 @@ export interface SyncResult {
   /** Device and server hold the same messages (as far as could be told). */
   converged: boolean
   failed: RowFailure[]
+  /** This sync also sent the server a fresh full budget file for new devices. */
+  uploadedFile: boolean
+  /** Why the file could not be sent; the sync itself still succeeded. */
+  fileError?: string
+}
+
+/** What turning on sync on this device would do, from what it and the server hold. */
+export interface SyncSetup {
+  /** This device has synced with the server before (or started to). */
+  linked: boolean
+  /** This device holds a budget of its own. */
+  hasBudget: boolean
+  server: ServerInfo
 }
 
 export interface SyncStatus {
@@ -239,11 +272,19 @@ export interface SyncEngine {
   /** Runs a sync; a call made while one is running joins it. */
   sync(): Promise<SyncResult>
   status(): Promise<SyncStatus>
+  setup(): Promise<SyncSetup>
+  /**
+   * Replaces this device's budget with the server's full file. The device is then at the
+   * file's log position, and the next `sync` brings it up to date.
+   */
+  downloadFile(): Promise<void>
   /** Forget cached state; call after the budget file is replaced. */
   reset(): void
 }
 
 export const PUSH_BATCH = 500
+/** A device sends a fresh full file once the server's is this many messages behind the log. */
+export const FILE_REFRESH_AFTER = 1000
 const CURSOR_KEY = 'server_cursor'
 const LAST_SYNC_KEY = 'last_sync_at'
 
@@ -317,12 +358,14 @@ export function createSyncEngine(deps: {
     pushed: number
     pulled: number
     root: number
+    fileCursor: number | null
     failed: RowFailure[]
   }> {
     let cursor = Number((await getState(adapter, CURSOR_KEY)) ?? 0)
     let pushed = 0
     let pulled = 0
     let root = 0
+    let fileCursor: number | null = null
     const failed: RowFailure[] = []
     for (;;) {
       const batch = await unsynced()
@@ -338,12 +381,54 @@ export function createSyncEngine(deps: {
       })
       cursor = res.cursor
       root = res.root
+      fileCursor = res.fileCursor
       pushed += batch.length
       pulled += applied.applied
       failed.push(...applied.failed)
       if (!res.hasMore && batch.length < PUSH_BATCH) break
     }
-    return { pushed, pulled, root, failed }
+    return { pushed, pulled, root, fileCursor, failed }
+  }
+
+  const hasBudget = async () =>
+    ((await adapter.query<{ n: number }>('SELECT COUNT(*) AS n FROM messages'))[0]?.n ?? 0) > 0
+
+  /**
+   * Two budgets must never be merged by accident: a device with a budget of its own that
+   * has never synced may not start pushing into a server that already holds one. A device
+   * with nothing yet is fine, it simply receives the household's.
+   */
+  async function linkOrRefuse(): Promise<void> {
+    if ((await getState(adapter, CURSOR_KEY)) !== null) return
+    if (await hasBudget()) {
+      if ((await transport.info()).messages > 0) {
+        throw new SyncError(
+          'This device has a budget of its own and the server already has one. Download the server’s budget to replace this one, or keep using this device alone.',
+          409,
+        )
+      }
+    }
+    // From here the device counts as linked, even if this first sync is cut short.
+    await setState(adapter, CURSOR_KEY, '0')
+  }
+
+  /** Sends the server a full file when it has none or its copy has fallen far behind. */
+  async function refreshFile(
+    fileCursor: number | null,
+  ): Promise<{ uploadedFile: boolean; fileError?: string }> {
+    const cursor = Number((await getState(adapter, CURSOR_KEY)) ?? 0)
+    if (fileCursor !== null && cursor - fileCursor < FILE_REFRESH_AFTER) {
+      return { uploadedFile: false }
+    }
+    if (!(await hasBudget())) return { uploadedFile: false }
+    try {
+      await transport.uploadFile(await adapter.exportFile(), cursor)
+      return { uploadedFile: true }
+    } catch (err) {
+      // Another device got there first with a newer file; nothing is wrong.
+      if (err instanceof SyncError && err.status === 409) return { uploadedFile: false }
+      return { uploadedFile: false, fileError: err instanceof Error ? err.message : String(err) }
+    }
   }
 
   /** Re-exchanges everything from the earliest minute where the two tries disagree. */
@@ -381,6 +466,7 @@ export function createSyncEngine(deps: {
   }
 
   async function run(): Promise<SyncResult> {
+    await linkOrRefuse()
     const sent = await exchange()
     const failed = sent.failed
     let pulled = sent.pulled
@@ -395,7 +481,12 @@ export function createSyncEngine(deps: {
       pulled += fix.pulled
     }
     await setState(adapter, LAST_SYNC_KEY, now())
-    return { pushed: sent.pushed, pulled, repaired, converged, failed }
+    // A file is only worth sharing once this device and the server agree on everything.
+    const file =
+      converged && failed.length === 0
+        ? await refreshFile(sent.fileCursor)
+        : { uploadedFile: false }
+    return { pushed: sent.pushed, pulled, repaired, converged, failed, ...file }
   }
 
   return {
@@ -411,6 +502,28 @@ export function createSyncEngine(deps: {
       )
       return { pending: row?.n ?? 0, lastSyncAt: await getState(adapter, LAST_SYNC_KEY) }
     },
+    async setup() {
+      return {
+        linked: (await getState(adapter, CURSOR_KEY)) !== null,
+        hasBudget: await hasBudget(),
+        server: await transport.info(),
+      }
+    },
+    async downloadFile() {
+      // Let a sync in flight finish; it would otherwise write into the file being replaced.
+      await running?.catch(() => {})
+      const file = await transport.downloadFile()
+      if (!file) {
+        throw new SyncError(
+          'The server has no budget file yet. Open the app on a device that has the budget and sync it first.',
+          404,
+        )
+      }
+      await importSqlite(adapter, file.bytes)
+      await setState(adapter, CURSOR_KEY, String(file.cursor))
+      trie = undefined
+      watermark = 0
+    },
     reset() {
       trie = undefined
       watermark = 0
@@ -425,21 +538,28 @@ export function httpSyncTransport(
   const base = opts.base ?? '/api/sync'
   const doFetch = opts.fetch ?? ((...args) => fetch(...args))
 
-  async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  /** One request; anything but success is a SyncError, except a missing file (the caller's call). */
+  async function send(path: string, init?: RequestInit): Promise<Response> {
     let res: Response
     try {
-      res = await doFetch(`${base}${path}`, {
-        ...init,
-        headers: { 'content-type': 'application/json', ...init?.headers },
-      })
+      res = await doFetch(`${base}${path}`, init)
     } catch {
       throw new SyncError('Could not reach the server')
     }
     if (res.status === 401) throw new SyncError('Sign in to sync', 401)
+    if (res.status === 404 && path === '/file' && !init?.method) return res
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null
       throw new SyncError(body?.error ?? `The server refused the sync (${res.status})`, res.status)
     }
+    return res
+  }
+
+  async function call<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await send(path, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...init?.headers },
+    })
     return (await res.json()) as T
   }
 
@@ -448,5 +568,23 @@ export function httpSyncTransport(
     trie: async () => (await call<{ trie: TrieNode }>('/trie')).trie,
     messagesFrom: (from, after) =>
       call(`/messages?from=${encodeURIComponent(from)}&after=${after}`),
+    info: () => call('/info'),
+    async downloadFile() {
+      const res = await send('/file')
+      if (res.status === 404) return null
+      const header = res.headers.get('x-budget-cursor')
+      const cursor = header === null || header === '' ? NaN : Number(header)
+      if (!Number.isInteger(cursor) || cursor < 0) {
+        throw new SyncError('The server sent a budget file without its position')
+      }
+      return { bytes: new Uint8Array(await res.arrayBuffer()), cursor }
+    },
+    async uploadFile(bytes, cursor) {
+      await send(`/file?cursor=${cursor}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: bytes as Uint8Array<ArrayBuffer>,
+      })
+    },
   }
 }

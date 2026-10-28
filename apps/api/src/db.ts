@@ -50,6 +50,16 @@ export const MIGRATIONS: readonly string[] = [
     received_at TEXT NOT NULL
   );
   CREATE INDEX server_messages_timestamp ON server_messages(timestamp);`,
+  // 3: the latest full budget file (a SQLite image uploaded by a device), for setting up a
+  // new device without replaying the whole log. One row; `cursor` is the log position the
+  // image already contains, so the new device pulls from there.
+  `CREATE TABLE budget_file (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor INTEGER NOT NULL,
+    bytes BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL
+  );`,
 ]
 
 export const DB_FILE = 'budget-fi.sqlite'

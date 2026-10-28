@@ -186,3 +186,93 @@ describe('sync endpoints', () => {
     expect((await post({ cursor: 0, messages: big })).status).toBe(200)
   })
 })
+
+describe('full budget file', () => {
+  const sqliteImage = (fill = 0) =>
+    Buffer.concat([Buffer.from('SQLite format 3\0'), Buffer.alloc(100, fill)])
+
+  const put = (cursor: number | string, body: BodyInit, headers: Record<string, string> = {}) =>
+    fetch(`${base}/api/sync/file?cursor=${cursor}`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/octet-stream',
+        origin: ORIGIN,
+        cookie,
+        ...headers,
+      },
+      body,
+    })
+
+  it('require a signed-in person', async () => {
+    expect((await get('/info', {})).status).toBe(401)
+    expect((await get('/file', {})).status).toBe(401)
+    expect((await put(0, sqliteImage(), { cookie: '' })).status).toBe(401)
+  })
+
+  it('reports an empty server, then what it holds', async () => {
+    expect(await (await get('/info')).json()).toEqual({ messages: 0, file: null })
+    expect((await get('/file')).status).toBe(404)
+
+    await post({ cursor: 0, messages: [msg(1), msg(2)] })
+    expect(await (await get('/info')).json()).toEqual({ messages: 2, file: null })
+
+    expect((await put(2, sqliteImage(7))).status).toBe(200)
+    const info = await (await get('/info')).json()
+    expect(info).toMatchObject({ messages: 2, file: { cursor: 2, size: 116 } })
+  })
+
+  it('hands back exactly the bytes uploaded, with the log position they contain', async () => {
+    await post({ cursor: 0, messages: [msg(1)] })
+    const image = sqliteImage(9)
+    await put(1, image)
+    const res = await get('/file')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('x-budget-cursor')).toBe('1')
+    expect(Buffer.from(await res.arrayBuffer()).equals(image)).toBe(true)
+  })
+
+  it('tells devices where the file stands on every sync', async () => {
+    const before = await (await post({ cursor: 0, messages: [msg(1)] })).json()
+    expect(before.fileCursor).toBeNull()
+    await put(1, sqliteImage())
+    const after = await (await post({ cursor: 1, messages: [] })).json()
+    expect(after.fileCursor).toBe(1)
+  })
+
+  it('keeps only the latest file and never replaces it with an older one', async () => {
+    await post({ cursor: 0, messages: [msg(1), msg(2), msg(3)] })
+    expect((await put(2, sqliteImage(1))).status).toBe(200)
+    expect((await put(3, sqliteImage(2))).status).toBe(200)
+    const stale = await put(1, sqliteImage(3))
+    expect(stale.status).toBe(409)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM budget_file').get()).toEqual({ n: 1 })
+    const kept = Buffer.from(await (await get('/file')).arrayBuffer())
+    expect(kept.equals(sqliteImage(2))).toBe(true)
+  })
+
+  describe('refuse', () => {
+    it('a file that is not a SQLite database', async () => {
+      await post({ cursor: 0, messages: [msg(1)] })
+      expect((await put(1, Buffer.from('<html>not a database</html>'))).status).toBe(400)
+      expect((await put(1, Buffer.alloc(0))).status).toBe(400)
+      expect((await get('/file')).status).toBe(404)
+    })
+
+    it('a cursor the server has not reached', async () => {
+      await post({ cursor: 0, messages: [msg(1)] })
+      expect((await put(2, sqliteImage())).status).toBe(400)
+      expect((await put(-1, sqliteImage())).status).toBe(400)
+      expect((await put('soon', sqliteImage())).status).toBe(400)
+    })
+
+    it('an upload from another origin', async () => {
+      const res = await put(0, sqliteImage(), { origin: 'https://evil.example' })
+      expect(res.status).toBe(403)
+    })
+  })
+
+  it('takes a first file at cursor 0 from a device that has not pushed yet', async () => {
+    expect((await put(0, sqliteImage())).status).toBe(200)
+    expect(await (await get('/info')).json()).toMatchObject({ messages: 0, file: { cursor: 0 } })
+  })
+})

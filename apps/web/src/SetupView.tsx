@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { AccountPanel } from './AccountPanel.tsx'
 import { budget } from './client.ts'
 import { messageOf } from './errors.ts'
 
@@ -39,6 +40,10 @@ export function SetupView({ onCreated }: { onCreated: () => void }) {
           )}
         </form>
       </section>
+      <details className="card">
+        <summary>Already have a household on your server?</summary>
+        <AccountPanel />
+      </details>
     </div>
   )
 }

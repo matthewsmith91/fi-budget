@@ -45,7 +45,7 @@ test.afterAll(async () => {
 })
 
 /** A fresh browser profile with its own software passkey store (a "device"). */
-async function newDevice(browser: Browser, path = '#/settings'): Promise<Page> {
+async function blankDevice(browser: Browser): Promise<Page> {
   const context = await browser.newContext()
   const page = await context.newPage()
   const cdp = await context.newCDPSession(page)
@@ -60,6 +60,11 @@ async function newDevice(browser: Browser, path = '#/settings'): Promise<Page> {
       automaticPresenceSimulation: true,
     },
   })
+  return page
+}
+
+async function newDevice(browser: Browser, path = '#/settings'): Promise<Page> {
+  const page = await blankDevice(browser)
   await page.goto(`${ORIGIN}/${path}`)
   // The budget file must exist before the shell shows Settings; the household is local to the device.
   await page.getByLabel('Household name').fill('Smith')
@@ -82,7 +87,7 @@ async function invite(page: Page, button: 'Pair another device' | 'Invite the ot
   return (await shown.textContent())!
 }
 
-test('sets up the household, signs in again, and pairs a second device and person', async ({
+test('signs in and pairs devices and people, then syncs a new device from the server', async ({
   browser,
 }) => {
   // First person, with the setup code from the server log
@@ -119,4 +124,32 @@ test('sets up the household, signs in again, and pairs a second device and perso
   // The household is full
   await laptop.getByRole('button', { name: 'Invite the other person' }).click()
   await expect(laptop.getByRole('alert')).toContainText('already has two people')
+
+  // The laptop turns on sync, which uploads its budget to the server
+  await laptop.getByRole('button', { name: 'Turn on sync' }).click()
+  await expect(laptop.getByRole('status').filter({ hasText: 'Synced' })).toContainText(
+    'full copy for new devices',
+  )
+  await expect(laptop.getByRole('button', { name: 'Sync now' })).toBeVisible()
+
+  // A brand-new device with no budget pairs, then downloads the household from the server
+  const newCode = await invite(laptop, 'Pair another device')
+  const second = await blankDevice(browser)
+  await second.goto(`${ORIGIN}/`)
+  await second.getByText('Already have a household on your server?').click()
+  await pair(second, newCode)
+  await expect(second.getByText('The household already has a budget on the server')).toBeVisible()
+  await second.getByRole('button', { name: 'Set up this device from the server' }).click()
+  await expect(
+    second.getByLabel('Budget navigation').getByText('Smith', { exact: true }),
+  ).toBeVisible()
+  await second.getByLabel('Budget navigation').getByRole('link', { name: 'Settings' }).click()
+  await expect(second.getByRole('button', { name: 'Sync now' })).toBeVisible()
+
+  // A device with a different budget of its own is not merged into the household's
+  const stranger2 = await newDevice(browser)
+  const clash = await invite(laptop, 'Pair another device')
+  await pair(stranger2, clash)
+  await expect(stranger2.getByRole('alert')).toContainText('can’t be merged')
+  await expect(stranger2.getByRole('button', { name: 'Turn on sync' })).toHaveCount(0)
 })

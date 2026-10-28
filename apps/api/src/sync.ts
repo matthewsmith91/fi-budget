@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import { AuthError } from './auth.ts'
 import { requireUser, sessionMiddleware } from './auth-routes.ts'
@@ -27,6 +27,9 @@ const MAX_DRIFT_MS = 5 * 60 * 1000
 
 const HLC = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)-[0-9A-F]{4}-([0-9a-f]{16})$/
 const IDENT = /^[a-z][a-z0-9_]*$/
+/** Largest budget file a device may upload. A household's file is a few megabytes. */
+export const MAX_FILE_BYTES = 64 * 1024 * 1024
+const SQLITE_MAGIC = Buffer.from('SQLite format 3\0')
 const ISO_PREFIX = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/
 
 /**
@@ -180,9 +183,48 @@ export class MessageStore {
   }
 }
 
+export interface FileInfo {
+  /** The log position the file already contains; a new device pulls from here. */
+  cursor: number
+  size: number
+  createdAt: string
+}
+
+/** The latest full budget file. Opaque to the server: it is stored and handed back whole. */
+export class FileStore {
+  constructor(private readonly db: DatabaseSync) {}
+
+  info(): FileInfo | null {
+    const row = this.db
+      .prepare('SELECT cursor, length(bytes) AS size, created_at FROM budget_file WHERE id = 1')
+      .get() as { cursor: number; size: number; created_at: string } | undefined
+    return row ? { cursor: row.cursor, size: row.size, createdAt: row.created_at } : null
+  }
+
+  get(): { cursor: number; bytes: Uint8Array } | null {
+    const row = this.db.prepare('SELECT cursor, bytes FROM budget_file WHERE id = 1').get() as
+      { cursor: number; bytes: Uint8Array } | undefined
+    return row ?? null
+  }
+
+  /** Replaces the file unless the one held already reaches further into the log. */
+  put(bytes: Uint8Array, cursor: number, userId: string, at: string): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT INTO budget_file (id, cursor, bytes, created_at, created_by) VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET cursor = excluded.cursor, bytes = excluded.bytes,
+           created_at = excluded.created_at, created_by = excluded.created_by
+         WHERE excluded.cursor >= budget_file.cursor`,
+      )
+      .run(cursor, bytes, at, userId)
+    return result.changes > 0
+  }
+}
+
 export function createSyncRouter(deps: SyncDeps): Router {
   const now = deps.now ?? Date.now
   const store = new MessageStore(deps.db)
+  const files = new FileStore(deps.db)
   const router = Router()
   router.use(sessionMiddleware({ db: deps.db, now }), requireUser)
 
@@ -194,8 +236,50 @@ export function createSyncRouter(deps: SyncDeps): Router {
     }
     const messages = parseMessages((req.body as { messages?: unknown }).messages ?? [], now())
     store.store(messages, new Date(now()).toISOString())
-    res.json({ ...store.after(cursor), root: store.merkle().hash })
+    res.json({
+      ...store.after(cursor),
+      root: store.merkle().hash,
+      fileCursor: files.info()?.cursor ?? null,
+    })
   })
+
+  // What the server holds, so a device can tell whether turning on sync would upload its
+  // budget, download the household's, or collide with a different one.
+  router.get('/info', (_req, res) => {
+    res.json({ messages: store.maxSeq(), file: files.info() })
+  })
+
+  // The full budget file for a new device, with the log position it already contains.
+  router.get('/file', (_req, res) => {
+    const file = files.get()
+    if (!file) throw new AuthError(404, 'The server has no budget file yet')
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Cache-Control': 'no-store',
+      'X-Budget-Cursor': String(file.cursor),
+    })
+    res.send(Buffer.from(file.bytes))
+  })
+
+  router.put(
+    '/file',
+    express.raw({ type: 'application/octet-stream', limit: MAX_FILE_BYTES }),
+    (req, res) => {
+      const cursor = Number(req.query.cursor)
+      if (!Number.isInteger(cursor) || cursor < 0 || cursor > store.maxSeq()) {
+        throw new AuthError(400, 'cursor must be a log position the server has')
+      }
+      const body: unknown = req.body
+      if (!Buffer.isBuffer(body) || !body.subarray(0, SQLITE_MAGIC.length).equals(SQLITE_MAGIC)) {
+        throw new AuthError(400, 'The body must be a SQLite database file')
+      }
+      const user = res.locals.user as { id: string }
+      if (!files.put(body, cursor, user.id, new Date(now()).toISOString())) {
+        throw new AuthError(409, 'The server already has a newer budget file')
+      }
+      res.json({ cursor, size: body.length })
+    },
+  )
 
   // The server's whole trie, for a device whose own root disagrees after a sync.
   router.get('/trie', (_req, res) => {
