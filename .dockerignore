@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+**/dist
+.turbo
+.git
+.env
+data
+apps/web/test-results
+apps/web/playwright-report
+docs

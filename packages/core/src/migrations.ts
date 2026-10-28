@@ -74,6 +74,86 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX categories_group ON categories(group_id, sort)`,
     ],
   },
+  {
+    version: 3,
+    name: 'messages',
+    // The change log: one row per field change, written in the same transaction as the
+    // change itself. \`value\` has no declared type so numbers and text keep their type.
+    // A delete is column '_deleted' with value 1.
+    up: [
+      `CREATE TABLE messages (
+        timestamp TEXT PRIMARY KEY,
+        table_name TEXT NOT NULL,
+        row_id TEXT NOT NULL,
+        column_name TEXT NOT NULL,
+        value,
+        device_id TEXT NOT NULL
+      )`,
+      `CREATE INDEX messages_row ON messages(table_name, row_id, column_name)`,
+    ],
+  },
+  {
+    version: 4,
+    name: 'allocations-and-transactions',
+    // Amounts are integer cents; spending is negative. month is YYYY-MM and a transaction
+    // date is YYYY-MM-DD. goal_id has no foreign key until goals exist (Phase 3).
+    up: [
+      `CREATE TABLE allocations (
+        id TEXT PRIMARY KEY,
+        month TEXT NOT NULL CHECK (month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'),
+        category_id TEXT NOT NULL REFERENCES categories(id),
+        goal_id TEXT,
+        amount INTEGER NOT NULL CHECK (amount <> 0),
+        source TEXT NOT NULL CHECK (source IN ('manual', 'rule', 'move', 'contribution')),
+        note TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX allocations_category ON allocations(category_id, month)`,
+      `CREATE INDEX allocations_month ON allocations(month)`,
+      `CREATE TABLE transactions (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        date TEXT NOT NULL CHECK (date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'),
+        payee TEXT,
+        amount INTEGER NOT NULL,
+        cleared INTEGER NOT NULL DEFAULT 0 CHECK (cleared IN (0, 1)),
+        reconciled INTEGER NOT NULL DEFAULT 0 CHECK (reconciled IN (0, 1)),
+        import_id TEXT,
+        transfer_pair_id TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX transactions_account ON transactions(account_id, date)`,
+      `CREATE TABLE transaction_splits (
+        id TEXT PRIMARY KEY,
+        transaction_id TEXT NOT NULL REFERENCES transactions(id),
+        category_id TEXT REFERENCES categories(id),
+        goal_id TEXT,
+        amount INTEGER NOT NULL,
+        need_or_want_override TEXT CHECK (need_or_want_override IN ('need', 'want')),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX transaction_splits_transaction ON transaction_splits(transaction_id)`,
+      `CREATE INDEX transaction_splits_category ON transaction_splits(category_id)`,
+    ],
+  },
+  {
+    version: 5,
+    name: 'sync-state',
+    // `synced` is 1 once the server has a message (sent by this device or received from
+    // it). Messages that predate sync stay 0 and go up with the first push. sync_state
+    // holds the server cursor and the time of the last completed sync.
+    up: [
+      `ALTER TABLE messages ADD COLUMN synced INTEGER NOT NULL DEFAULT 0`,
+      `CREATE INDEX messages_unsynced ON messages(timestamp) WHERE synced = 0`,
+      `CREATE TABLE sync_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

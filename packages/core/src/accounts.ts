@@ -62,7 +62,7 @@ function assertBudgetable(type: AccountType, onBudget: boolean) {
   }
 }
 
-export function accountsApi({ adapter, newId, now }: CrudDeps): AccountsApi {
+export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): AccountsApi {
   return {
     async listAccounts() {
       const rows = await adapter.query<AccountRow & Record<string, never>>(
@@ -78,33 +78,41 @@ export function accountsApi({ adapter, newId, now }: CrudDeps): AccountsApi {
       return adapter.transaction(async (tx) => {
         await assertNameFree(tx, clean)
         const id = newId()
-        await tx.exec(
-          'INSERT INTO accounts (id, name, type, on_budget, closed, created_at) VALUES (?, ?, ?, ?, 0, ?)',
-          [id, clean, type, flag(budgeted), now()],
-        )
+        await log(tx).insert('accounts', {
+          id,
+          name: clean,
+          type,
+          on_budget: flag(budgeted),
+          closed: 0,
+          created_at: now(),
+        })
         return getAccount(tx, id)
       })
     },
-    async updateAccount(id, changes) {
+    async updateAccount(id, patch) {
       return adapter.transaction(async (tx) => {
         const current = await getAccount(tx, id)
-        const name = changes.name === undefined ? current.name : cleanName(changes.name, 'Account')
-        const onBudget = changes.onBudget ?? current.onBudget
+        const name = patch.name === undefined ? current.name : cleanName(patch.name, 'Account')
+        const onBudget = patch.onBudget ?? current.onBudget
         assertBudgetable(current.type, onBudget)
         if (name !== current.name) await assertNameFree(tx, name, id)
-        await tx.exec('UPDATE accounts SET name = ?, on_budget = ?, closed = ? WHERE id = ?', [
+        await log(tx).update('accounts', id, {
           name,
-          flag(onBudget),
-          flag(changes.closed ?? current.closed),
-          id,
-        ])
+          on_budget: flag(onBudget),
+          closed: flag(patch.closed ?? current.closed),
+        })
         return getAccount(tx, id)
       })
     },
     async deleteAccount(id) {
       await adapter.transaction(async (tx) => {
         await getAccount(tx, id)
-        await tx.exec('DELETE FROM accounts WHERE id = ?', [id])
+        const [used] = await tx.query(
+          'SELECT 1 AS x FROM transactions WHERE account_id = ? LIMIT 1',
+          [id],
+        )
+        if (used) throw new Error('This account has transactions; close it instead of deleting')
+        await log(tx).delete('accounts', id)
       })
     },
   }

@@ -1,9 +1,12 @@
-import type { StorageAdapter } from './storage.ts'
+import type { ChangeLog } from './changes.ts'
+import type { SqlRunner, StorageAdapter } from './storage.ts'
 
 export interface CrudDeps {
   adapter: StorageAdapter
   newId: () => string
   now: () => string
+  /** The change log for a transaction; all writes to synced tables go through it. */
+  changes: (tx: SqlRunner) => ChangeLog
 }
 
 export function cleanName(input: string, what: string): string {

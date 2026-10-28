@@ -1,8 +1,19 @@
 import { accountsApi, type AccountsApi } from './accounts.ts'
+import { allocationsApi, type AllocationsApi } from './allocations.ts'
 import { exportJson, importJson, importSqlite } from './budget-file.ts'
+import { changeLog } from './changes.ts'
 import { categoriesApi, type CategoriesApi } from './categories.ts'
+import { newDeviceId } from './hlc.ts'
 import { currentVersion } from './migrations.ts'
-import type { StorageAdapter } from './storage.ts'
+import type { SqlRunner, StorageAdapter } from './storage.ts'
+import {
+  createSyncEngine,
+  SyncError,
+  type SyncResult,
+  type SyncStatus,
+  type SyncTransport,
+} from './sync.ts'
+import { transactionsApi, type TransactionsApi } from './transactions.ts'
 
 export interface Household {
   id: string
@@ -23,7 +34,7 @@ export interface ImportResult {
 }
 
 /** Everything the UI may ask of the domain layer. Grows each phase. */
-export interface BudgetApi extends AccountsApi, CategoriesApi {
+export interface BudgetApi extends AccountsApi, CategoriesApi, AllocationsApi, TransactionsApi {
   getStatus(): Promise<AppStatus>
   getHousehold(): Promise<Household | null>
   createHousehold(input: { name: string; members: string[] }): Promise<Household>
@@ -31,12 +42,19 @@ export interface BudgetApi extends AccountsApi, CategoriesApi {
   exportSqlite(): Promise<Uint8Array>
   importJson(text: string): Promise<ImportResult>
   importSqlite(bytes: Uint8Array): Promise<ImportResult>
+  /** Pushes local changes to the server and merges what the other devices sent. */
+  syncNow(): Promise<SyncResult>
+  getSyncStatus(): Promise<SyncStatus>
 }
 
 export interface ApiDeps {
   adapter: StorageAdapter
   storage: AppStatus['storage']
   sqliteVersion: string
+  /** This device's id, stamped on every change. Must be stable across restarts of one device. */
+  deviceId?: string
+  /** How to reach the sync server; without it `syncNow` reports that sync is unavailable. */
+  syncTransport?: SyncTransport
   newId?: () => string
   now?: () => string
 }
@@ -62,11 +80,18 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     }
   }
 
-  const crud = { adapter, newId, now }
+  const deviceId = deps.deviceId ?? newDeviceId()
+  const crud = { adapter, newId, now, changes: (tx: SqlRunner) => changeLog(tx, { deviceId, now }) }
+
+  const sync = deps.syncTransport
+    ? createSyncEngine({ adapter, transport: deps.syncTransport, now })
+    : null
 
   return {
     ...accountsApi(crud),
     ...categoriesApi(crud),
+    ...allocationsApi(crud),
+    ...transactionsApi(crud),
     async getStatus() {
       return {
         schemaVersion: await adapter.transaction((tx) => currentVersion(tx)),
@@ -85,30 +110,38 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
         if (existing.length > 0) throw new Error('This budget already has a household')
         const householdId = newId()
         const at = now()
-        await tx.exec('INSERT INTO households (id, name, created_at) VALUES (?, ?, ?)', [
-          householdId,
-          cleanName,
-          at,
-        ])
+        const log = crud.changes(tx)
+        await log.insert('households', { id: householdId, name: cleanName, created_at: at })
         for (const display of names) {
-          await tx.exec(
-            'INSERT INTO members (id, household_id, display_name, created_at) VALUES (?, ?, ?, ?)',
-            [newId(), householdId, display, at],
-          )
+          await log.insert('members', {
+            id: newId(),
+            household_id: householdId,
+            display_name: display,
+            created_at: at,
+          })
         }
       })
       return (await getHousehold())!
     },
     exportJson: () => exportJson(adapter, now),
     exportSqlite: () => adapter.exportFile(),
+    async syncNow() {
+      if (!sync) throw new SyncError('Sync is not available on this device')
+      return sync.sync()
+    },
+    async getSyncStatus() {
+      return sync ? sync.status() : { pending: 0, lastSyncAt: null }
+    },
     async importJson(text) {
       const safetyBackup = await adapter.exportFile()
       await importJson(adapter, text)
+      sync?.reset()
       return { safetyBackup }
     },
     async importSqlite(bytes) {
       const safetyBackup = await adapter.exportFile()
       await importSqlite(adapter, bytes)
+      sync?.reset()
       return { safetyBackup }
     },
   }

@@ -17,15 +17,17 @@ budget-fi/
 ├── package.json       # Workspace root (apps/*, packages/*), turbo + prettier scripts
 ├── turbo.json         # Task pipeline: build, dev, lint, typecheck, test
 ├── .github/workflows/ci.yml   # format, lint, typecheck, test, build, e2e
+├── Dockerfile, compose.yaml, Caddyfile   # one image (app + server) behind Caddy for HTTPS
 ├── apps/
 │   ├── web/           # React 19 + Vite + TypeScript PWA (oxlint for linting)
-│   │   ├── src/       # UI; client.ts is the only handle on the domain layer
+│   │   ├── src/       # UI; client.ts is the only handle on the domain layer. App.tsx is the shell (hash routes): Sidebar, BudgetView (categories table), RegisterView (account ledger), SettingsView
+│   │   │              # Views read with useBudgetQuery and call refresh() (data.ts) after any write
 │   │   ├── src/worker/  # budget.worker.ts: opens SQLite in OPFS, runs migrations, serves the RPC API
 │   │   └── e2e/       # Playwright tests against the production build (real Chrome)
-│   └── api/           # Express 5 server; unused until Phase 2 (becomes the sync server)
+│   └── api/           # Express 5 + node:sqlite server: serves the built web app, /health, /api/auth (passkey sign-in, sessions, one-time pairing codes), /api/sync (relay of change messages, signed-in only)
 └── packages/
     ├── core/          # @budget-fi/core: pure TS domain layer, no DOM
-    │   └── src/       # money, storage adapter, SQLite adapter, migrations, export/import, RPC, BudgetApi
+    │   └── src/       # money, storage adapter, SQLite adapter, migrations, export/import, RPC, BudgetApi, change log, sync (merge, engine, Merkle trie)
     └── ui/            # @budget-fi/ui: shared component library (currently empty)
 ```
 
@@ -43,7 +45,7 @@ npm run dev            # run all dev servers (web via Vite, api via tsx watch on
 npm run build          # build all apps
 npm run lint           # oxlint (apps/web)
 npm run typecheck      # tsc in web, core, api
-npm test               # unit tests (Vitest) in core
+npm test               # unit tests (Vitest) in core and api
 npm run test:e2e       # Playwright against a production build; needs Google Chrome installed
 npm run format         # prettier --write (format:check is what CI runs)
 ```
@@ -56,6 +58,8 @@ npm test -w @budget-fi/core  # core unit tests
 npm run build -w web         # tsc -b && vite build (also generates the service worker)
 npx pwa-assets-generator     # in apps/web: regenerate icons from public/icon.svg
 ```
+
+Self-hosting: `DOMAIN=budget.example.com docker compose up -d` builds one image that serves the static app and the server from the same origin, with Caddy in front for HTTPS. The server's SQLite file lives in the `data` volume (`DATA_DIR`, default `./data` outside Docker). In `npm run dev` Vite proxies `/api` and `/health` to the server so the app sees one origin there too. Passkeys are bound to the origin: set `ORIGIN` (compose derives it from `DOMAIN`; the hostname becomes the RP ID; dev defaults to `http://localhost:5173` and the server port). With no users yet the server logs a one-time setup code at startup; the first person enters it in Settings, then pairs devices or the other person from there (max two people). Server migrations are append-only in `apps/api/src/db.ts`; the server needs Node 22.13+ (`node:sqlite`).
 
 The service worker only exists in production builds, so test PWA behavior with `npm run test:e2e` or `npm run build -w web && npx vite preview`.
 
@@ -77,7 +81,7 @@ The service worker only exists in production builds, so test PWA behavior with `
 - Storage: SQLite in OPFS (`opfs-sahpool` VFS) behind the `StorageAdapter` interface. Only one tab can own the database at a time (guarded by a Web Lock). If OPFS is unavailable the worker falls back to memory and the UI warns loudly.
 - Schema changes: append-only versioned migrations in `packages/core/src/migrations.ts`. Never edit a released migration; add a new one. The app refuses to open a file from a newer schema.
 - Per-device settings (last backup time) live in `localStorage`, outside the budget file, so they never sync.
-- Sync (Phase 2): optional. Every write becomes a change message with a hybrid logical clock timestamp; newest-wins per field. The server is a small Node + SQLite service on the same origin as the app (required for passkeys); it relays changes, signs people in and proxies SimpleFIN. `apps/api` is its placeholder.
+- Sync (Phase 2, push/pull built; UI banner, new-device download and bank import not yet): optional. Every write becomes a change message with a hybrid logical clock timestamp; newest-wins per field: a row is rebuilt from the newest message per column, so arrival order never matters, and a delete is permanent. A sync is one `POST /api/sync` (push unsynced, pull after the server cursor); if the Merkle roots still differ, the device diffs the tries and re-exchanges everything from the earliest differing minute. The server keeps its own copy of the trie hashing (`apps/api/src/merkle.ts`) because it cannot import core; both test suites assert the same root hash. The server is a small Node + SQLite service on the same origin as the app (required for passkeys); it relays changes, signs people in and proxies SimpleFIN. `apps/api` is its placeholder.
 - Import: SimpleFIN via the server, YNAB history import once. Aggregator tokens live only on the server, never in the client.
 - Rules that create rows (income rules, unit purchases) use deterministic IDs so two devices converge on one row.
 - Not yet decided: TanStack Query (the worker calls are already async; add it only if caching becomes necessary).

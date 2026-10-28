@@ -56,7 +56,7 @@ export function BackupPanel({ onChanged }: { onChanged: () => void }) {
     })
 
   return (
-    <section>
+    <section className="card">
       <h2>Backup</h2>
       <div className="row">
         <button onClick={() => void exportJson()}>Export JSON</button>

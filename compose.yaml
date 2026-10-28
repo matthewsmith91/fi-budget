@@ -1,0 +1,37 @@
+# Self-hosting on a VPS or home box: the app container plus Caddy, which gets and renews
+# a Let's Encrypt certificate. Passkeys need HTTPS on the same origin that serves the app.
+#
+#   DOMAIN=budget.example.com docker compose up -d
+#
+# On a host that terminates TLS itself (Fly, Railway) skip Caddy and deploy the Dockerfile.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Passkeys are bound to this origin; the hostname becomes the passkey's relying-party ID.
+      ORIGIN: https://${DOMAIN:?Set DOMAIN to the hostname that points at this machine}
+    volumes:
+      - data:/data
+    # No published ports: only Caddy can reach the app.
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN to the hostname that points at this machine}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

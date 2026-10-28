@@ -2,6 +2,7 @@
 import sqlite3InitModule, { type Sqlite3Static } from '@sqlite.org/sqlite-wasm'
 import {
   createBudgetApi,
+  httpSyncTransport,
   memoryBackend,
   migrate,
   serve,
@@ -10,6 +11,7 @@ import {
   type RpcMethods,
   type SqliteBackend,
 } from '@budget-fi/core'
+import { loadDeviceId } from './device-id.ts'
 import { DatabaseLockedError } from './errors.ts'
 
 const DB_PATH = '/budget.sqlite3'
@@ -57,6 +59,8 @@ async function start(): Promise<RpcMethods> {
   return createBudgetApi({
     adapter,
     storage,
+    deviceId: await loadDeviceId(),
+    syncTransport: httpSyncTransport(),
     sqliteVersion: sqlite3.version.libVersion,
   }) as unknown as RpcMethods
 }

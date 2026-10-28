@@ -34,8 +34,8 @@ export function useServiceWorker() {
   return { needRefresh, offlineReady, applyUpdate }
 }
 
-/** Runs an async loader and re-runs it when `reload()` is called. */
-export function useAsync<T>(load: () => Promise<T>) {
+/** Runs an async loader; re-runs when `reload()` is called or any of `deps` change. */
+export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[] = []) {
   const [tick, setTick] = useState(0)
   const [state, setState] = useState<{ data?: T; error?: Error; loading: boolean }>({
     loading: true,
@@ -55,7 +55,7 @@ export function useAsync<T>(load: () => Promise<T>) {
       live = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick])
+  }, [tick, ...deps])
   const reload = useCallback(() => setTick((t) => t + 1), [])
   return { ...state, reload }
 }

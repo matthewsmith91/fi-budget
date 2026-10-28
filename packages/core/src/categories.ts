@@ -137,7 +137,7 @@ function assertNeedOrWant(value: string) {
   if (!NEED_OR_WANT.includes(value as NeedOrWant)) throw new Error(`Unknown tag "${value}"`)
 }
 
-export function categoriesApi({ adapter, newId, now }: CrudDeps): CategoriesApi {
+export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): CategoriesApi {
   return {
     async listCategoryGroups() {
       return adapter.transaction(async (tx) => {
@@ -162,24 +162,26 @@ export function categoriesApi({ adapter, newId, now }: CrudDeps): CategoriesApi 
       return adapter.transaction(async (tx) => {
         await assertGroupNameFree(tx, clean)
         const id = newId()
-        await tx.exec(
-          'INSERT INTO category_groups (id, name, sort, created_at) VALUES (?, ?, ?, ?)',
-          [id, clean, await nextSort(tx, 'category_groups'), now()],
-        )
+        await log(tx).insert('category_groups', {
+          id,
+          name: clean,
+          sort: await nextSort(tx, 'category_groups'),
+          hidden: 0,
+          created_at: now(),
+        })
         return getGroup(tx, id)
       })
     },
-    async updateCategoryGroup(id, changes) {
+    async updateCategoryGroup(id, patch) {
       return adapter.transaction(async (tx) => {
         const current = await getGroup(tx, id)
         const name =
-          changes.name === undefined ? current.name : cleanName(changes.name, 'Category group')
+          patch.name === undefined ? current.name : cleanName(patch.name, 'Category group')
         if (name !== current.name) await assertGroupNameFree(tx, name, id)
-        await tx.exec('UPDATE category_groups SET name = ?, hidden = ? WHERE id = ?', [
+        await log(tx).update('category_groups', id, {
           name,
-          flag(changes.hidden ?? current.hidden),
-          id,
-        ])
+          hidden: flag(patch.hidden ?? current.hidden),
+        })
         return getGroup(tx, id)
       })
     },
@@ -189,7 +191,7 @@ export function categoriesApi({ adapter, newId, now }: CrudDeps): CategoriesApi 
         if (group.categories.length > 0) {
           throw new Error('Move or delete this group’s categories first, or hide the group')
         }
-        await tx.exec('DELETE FROM category_groups WHERE id = ?', [id])
+        await log(tx).delete('category_groups', id)
       })
     },
     async reorderCategoryGroups(ids) {
@@ -200,9 +202,9 @@ export function categoriesApi({ adapter, newId, now }: CrudDeps): CategoriesApi 
           existing.map((r) => r.id),
           'group',
         )
-        for (const [i, id] of ids.entries()) {
-          await tx.exec('UPDATE category_groups SET sort = ? WHERE id = ?', [i, id])
-        }
+        const changes = log(tx)
+        for (const [i, id] of ids.entries())
+          await changes.update('category_groups', id, { sort: i })
       })
     },
 
@@ -213,40 +215,47 @@ export function categoriesApi({ adapter, newId, now }: CrudDeps): CategoriesApi 
         await getGroup(tx, groupId)
         await assertCategoryNameFree(tx, groupId, clean)
         const id = newId()
-        await tx.exec(
-          'INSERT INTO categories (id, group_id, name, need_or_want, sort, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-          [id, groupId, clean, needOrWant, await nextSort(tx, 'categories', groupId), now()],
-        )
+        await log(tx).insert('categories', {
+          id,
+          group_id: groupId,
+          name: clean,
+          need_or_want: needOrWant,
+          sort: await nextSort(tx, 'categories', groupId),
+          hidden: 0,
+          created_at: now(),
+        })
         return getCategory(tx, id)
       })
     },
-    async updateCategory(id, changes) {
-      if (changes.needOrWant !== undefined) assertNeedOrWant(changes.needOrWant)
+    async updateCategory(id, patch) {
+      if (patch.needOrWant !== undefined) assertNeedOrWant(patch.needOrWant)
       return adapter.transaction(async (tx) => {
         const current = await getCategory(tx, id)
-        const name = changes.name === undefined ? current.name : cleanName(changes.name, 'Category')
-        const groupId = changes.groupId ?? current.groupId
+        const name = patch.name === undefined ? current.name : cleanName(patch.name, 'Category')
+        const groupId = patch.groupId ?? current.groupId
         const moved = groupId !== current.groupId
         if (moved) await getGroup(tx, groupId)
         if (moved || name !== current.name) await assertCategoryNameFree(tx, groupId, name, id)
-        await tx.exec(
-          'UPDATE categories SET group_id = ?, name = ?, need_or_want = ?, hidden = ?, sort = ? WHERE id = ?',
-          [
-            groupId,
-            name,
-            changes.needOrWant ?? current.needOrWant,
-            flag(changes.hidden ?? current.hidden),
-            moved ? await nextSort(tx, 'categories', groupId) : await sortOf(tx, id),
-            id,
-          ],
-        )
+        await log(tx).update('categories', id, {
+          group_id: groupId,
+          name,
+          need_or_want: patch.needOrWant ?? current.needOrWant,
+          hidden: flag(patch.hidden ?? current.hidden),
+          ...(moved && { sort: await nextSort(tx, 'categories', groupId) }),
+        })
         return getCategory(tx, id)
       })
     },
     async deleteCategory(id) {
       await adapter.transaction(async (tx) => {
         await getCategory(tx, id)
-        await tx.exec('DELETE FROM categories WHERE id = ?', [id])
+        const [used] = await tx.query(
+          `SELECT 1 AS x FROM allocations WHERE category_id = ?
+           UNION ALL SELECT 1 FROM transaction_splits WHERE category_id = ? LIMIT 1`,
+          [id, id],
+        )
+        if (used) throw new Error('This category has budget history; hide it instead of deleting')
+        await log(tx).delete('categories', id)
       })
     },
     async reorderCategories(groupId, ids) {
@@ -257,17 +266,9 @@ export function categoriesApi({ adapter, newId, now }: CrudDeps): CategoriesApi 
           existing.map((c) => c.id),
           'category',
         )
-        for (const [i, id] of ids.entries()) {
-          await tx.exec('UPDATE categories SET sort = ? WHERE id = ?', [i, id])
-        }
+        const changes = log(tx)
+        for (const [i, id] of ids.entries()) await changes.update('categories', id, { sort: i })
       })
     },
   }
-}
-
-async function sortOf(db: SqlRunner, categoryId: string): Promise<number> {
-  const [row] = await db.query<{ sort: number }>('SELECT sort FROM categories WHERE id = ?', [
-    categoryId,
-  ])
-  return row!.sort
 }

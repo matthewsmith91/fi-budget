@@ -34,6 +34,8 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,wasm}'],
         navigateFallback: 'index.html',
+        // Server-owned paths must reach the server, not be answered with the app shell
+        navigateFallbackDenylist: [/^\/api\//, /^\/health/],
       },
       devOptions: { enabled: false },
     }),
@@ -41,4 +43,11 @@ export default defineConfig({
   // sqlite-wasm locates its .wasm via import.meta.url, which pre-bundling breaks
   optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm'] },
   worker: { format: 'es' },
+  // In production the server serves the app and the API from one origin; mirror that in dev.
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3001',
+      '/health': 'http://localhost:3001',
+    },
+  },
 })
