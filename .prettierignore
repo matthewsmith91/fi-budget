@@ -1,0 +1,8 @@
+node_modules
+dist
+.turbo
+package-lock.json
+test-results
+playwright-report
+apps/web/public
+docs
