@@ -146,3 +146,70 @@ button {
 .ok {
   color: var(--accent);
 }
+
+h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  margin: 0.75rem 0 0.25rem;
+}
+
+.items {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+}
+
+.items li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.grow {
+  flex: 1 1 8rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.closed {
+  opacity: 0.6;
+}
+
+button.secondary {
+  min-height: 2.25rem;
+  padding: 0 0.6rem;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--muted);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+select {
+  font: inherit;
+  min-height: 2.25rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--muted);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+form.inline {
+  display: flex;
+  gap: 0.5rem;
+}
+
+form.inline input {
+  flex: 1;
+}

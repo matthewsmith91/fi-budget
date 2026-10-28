@@ -109,3 +109,32 @@ test('a second tab is told the budget is open elsewhere', async ({ page, context
   await second.goto('/')
   await expect(second.getByRole('alert')).toContainText('open in another tab')
 })
+
+test('accounts and categories persist across a reload', async ({ page }) => {
+  await page.goto('/')
+  await page.getByLabel('Account name').fill('Ally HYSA')
+  await page.getByLabel('Account type').selectOption('savings')
+  await page.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Ally HYSA' })).toBeVisible()
+
+  // a duplicate name is refused with a message
+  await page.getByLabel('Account name').fill('ally hysa')
+  await page.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'already exists' })).toBeVisible()
+
+  await page.getByLabel('Group name').fill('Bills')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByLabel('New category in Bills').fill('Rent')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Rent' })).toBeVisible()
+
+  await page.reload()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Ally HYSA' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /Bills/ })).toBeVisible()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Rent' })).toBeVisible()
+
+  // a group with categories can't be deleted
+  page.once('dialog', (d) => void d.accept())
+  await page.getByRole('heading', { name: /Bills/ }).getByRole('button', { name: 'Delete' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'categories first' })).toBeVisible()
+})

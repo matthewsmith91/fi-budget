@@ -1,7 +1,9 @@
 import { backupReminderDue, cents, formatCents } from '@budget-fi/core'
 import { useState } from 'react'
+import { AccountsPanel } from './AccountsPanel.tsx'
 import { BackupPanel } from './BackupPanel.tsx'
 import { budget } from './client.ts'
+import { CategoriesPanel } from './CategoriesPanel.tsx'
 import { getBackupState } from './device-settings.ts'
 import { useAsync, usePersistentStorage, useServiceWorker } from './hooks.ts'
 import { HouseholdPanel } from './HouseholdPanel.tsx'
@@ -79,6 +81,8 @@ export default function App() {
       </section>
 
       <HouseholdPanel household={household.data} loading={household.loading} onCreated={refresh} />
+      <AccountsPanel />
+      <CategoriesPanel />
       <BackupPanel onChanged={refresh} />
     </main>
   )

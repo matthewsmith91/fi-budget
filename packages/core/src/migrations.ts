@@ -37,6 +37,43 @@ export const MIGRATIONS: readonly Migration[] = [
       )`,
     ],
   },
+  {
+    version: 2,
+    name: 'accounts-and-categories',
+    // No UNIQUE on names: two devices may add the same name offline, and sync must
+    // be able to merge both rows. The API rejects duplicates it can see.
+    up: [
+      `CREATE TABLE accounts (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('checking', 'credit', 'savings', 'investment')),
+        on_budget INTEGER NOT NULL CHECK (on_budget IN (0, 1)),
+        closed INTEGER NOT NULL DEFAULT 0 CHECK (closed IN (0, 1)),
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        CHECK (type <> 'investment' OR on_budget = 0)
+      )`,
+      `CREATE TABLE category_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort INTEGER NOT NULL,
+        hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1)),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE categories (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL REFERENCES category_groups(id),
+        name TEXT NOT NULL,
+        need_or_want TEXT NOT NULL DEFAULT 'want' CHECK (need_or_want IN ('need', 'want')),
+        sort INTEGER NOT NULL,
+        hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1)),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX categories_group ON categories(group_id, sort)`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

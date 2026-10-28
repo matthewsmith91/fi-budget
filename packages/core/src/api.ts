@@ -1,4 +1,6 @@
+import { accountsApi, type AccountsApi } from './accounts.ts'
 import { exportJson, importJson, importSqlite } from './budget-file.ts'
+import { categoriesApi, type CategoriesApi } from './categories.ts'
 import { currentVersion } from './migrations.ts'
 import type { StorageAdapter } from './storage.ts'
 
@@ -21,7 +23,7 @@ export interface ImportResult {
 }
 
 /** Everything the UI may ask of the domain layer. Grows each phase. */
-export interface BudgetApi {
+export interface BudgetApi extends AccountsApi, CategoriesApi {
   getStatus(): Promise<AppStatus>
   getHousehold(): Promise<Household | null>
   createHousehold(input: { name: string; members: string[] }): Promise<Household>
@@ -60,7 +62,11 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     }
   }
 
+  const crud = { adapter, newId, now }
+
   return {
+    ...accountsApi(crud),
+    ...categoriesApi(crud),
     async getStatus() {
       return {
         schemaVersion: await adapter.transaction((tx) => currentVersion(tx)),
