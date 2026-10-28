@@ -1,4 +1,5 @@
 import { cleanName, flag, type CrudDeps } from './crud.ts'
+import { dropPaymentCategory, ensurePaymentCategory, hidePaymentCategory } from './categories.ts'
 import type { SqlRunner } from './storage.ts'
 
 export const ACCOUNT_TYPES = ['checking', 'credit', 'savings', 'investment'] as const
@@ -86,6 +87,9 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
           closed: 0,
           created_at: now(),
         })
+        if (type === 'credit' && budgeted) {
+          await ensurePaymentCategory(tx, log(tx), { id, name: clean }, now())
+        }
         return getAccount(tx, id)
       })
     },
@@ -101,6 +105,12 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
           on_budget: flag(onBudget),
           closed: flag(patch.closed ?? current.closed),
         })
+        if (current.type === 'credit') {
+          // The payment category follows the card's name and whether it is on budget.
+          if (onBudget) {
+            await ensurePaymentCategory(tx, log(tx), { id, name }, now(), !current.onBudget)
+          } else await hidePaymentCategory(tx, log(tx), id)
+        }
         return getAccount(tx, id)
       })
     },
@@ -112,6 +122,7 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
           [id],
         )
         if (used) throw new Error('This account has transactions; close it instead of deleting')
+        await dropPaymentCategory(tx, log(tx), id)
         await log(tx).delete('accounts', id)
       })
     },

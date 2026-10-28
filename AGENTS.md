@@ -6,7 +6,7 @@ A shared household budgeting app for two users (Matt and Jessica) that replaces 
 
 The app tracks and plans; it never moves money. One household, two users, no public sign-up.
 
-The full spec and phased roadmap live in `docs/specs/Household Budget App — Spec & Plan.md`. Phase 0 (foundations) is built; Phase 1 (budget core) is next. The spec is authoritative where this file disagrees.
+The full spec and phased roadmap live in `docs/specs/Household Budget App — Spec & Plan.md`. Phase 0 (foundations) and Phase 1 (budget core) are built; Phase 2 (sync and import) is partly built. The spec is authoritative where this file disagrees.
 
 ## Project Layout
 
@@ -20,14 +20,14 @@ budget-fi/
 ├── Dockerfile, compose.yaml, Caddyfile   # one image (app + server) behind Caddy for HTTPS
 ├── apps/
 │   ├── web/           # React 19 + Vite + TypeScript PWA (oxlint for linting)
-│   │   ├── src/       # UI; client.ts is the only handle on the domain layer. App.tsx is the shell (hash routes): Sidebar, BudgetView (categories table), RegisterView (account ledger), SettingsView
+│   │   ├── src/       # UI; client.ts is the only handle on the domain layer. App.tsx is the shell (hash routes): Sidebar, BudgetView (categories table), RegisterView (account ledger, with transfer and reconcile dialogs), ActivityView (who changed what), SettingsView
 │   │   │              # Views read with useBudgetQuery and call refresh() (data.ts) after any write
 │   │   ├── src/worker/  # budget.worker.ts: opens SQLite in OPFS, runs migrations, serves the RPC API
 │   │   └── e2e/       # Playwright tests against the production build (real Chrome)
 │   └── api/           # Express 5 + node:sqlite server: serves the built web app, /health, /api/auth (passkey sign-in, sessions, one-time pairing codes), /api/sync (relay of change messages, signed-in only)
 └── packages/
     ├── core/          # @budget-fi/core: pure TS domain layer, no DOM
-    │   └── src/       # money, storage adapter, SQLite adapter, migrations, export/import, RPC, BudgetApi, change log, sync (merge, engine, Merkle trie)
+    │   └── src/       # money, storage adapter, SQLite adapter, migrations, export/import, RPC, BudgetApi, change log, transactions (splits, transfers), reconciliation, activity feed, sync (merge, engine, Merkle trie)
     └── ui/            # @budget-fi/ui: shared component library (currently empty)
 ```
 
@@ -74,6 +74,10 @@ The service worker only exists in production builds, so test PWA behavior with `
 - Spending from a goal is a planned draw-down, never flagged as overspending.
 - Months roll over: a category opens a month with last month's available if positive; cash overspending does not carry, it comes out of the next month's Ready to Assign (`rollCategories` in `allocations.ts`).
 - Investment accounts are tracking accounts: in net worth and goals, not in the monthly budget.
+- A transfer is two transactions sharing `transfer_pair_id`; the amount is mirrored, date and cleared are per leg. Between budget accounts it moves nothing in the budget; across the budget edge the budget leg is spending or income and may carry a category.
+- Each on-budget credit card has a payment category (`categories.credit_card_account_id`, id `payment-<accountId>`, in the `credit-card-payments` group). Its activity is derived in `rollCategories`: card purchases add to it, refunds and payments (transfers into the card) draw it down. It is managed by the card: no rename, delete or transaction use. Purchases move in full, even past the spending category's balance; that shortfall is cash overspending and comes out of the next month's Ready to Assign.
+- Reconciling locks every cleared transaction in an account and posts an uncategorized cleared adjustment if the bank balance differs; locked transactions can't be edited or deleted.
+- The activity feed is derived from the `messages` log, not stored. Messages carry no write id, so `activity.ts` splits a row's messages into actions at a delete, at `created_at` (the last column of every insert) and at a repeated column. Who made a change comes from the `devices` row (synced) that ties a device id to a member.
 - Money is **integer cents** in the database and the client. Never use floats for amounts; rounding remainders fall to Ready to Assign.
 
 **Stack (per spec)**

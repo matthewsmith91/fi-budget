@@ -154,6 +154,28 @@ export const MIGRATIONS: readonly Migration[] = [
       )`,
     ],
   },
+  {
+    version: 6,
+    name: 'credit-card-payment-categories',
+    // A credit card's payment category points at its account. Cards that already exist get
+    // theirs here, with the same deterministic ids the app uses for new cards, so devices
+    // that each run this migration agree on the rows (it writes no change messages).
+    up: [
+      `ALTER TABLE categories ADD COLUMN credit_card_account_id TEXT`,
+      `CREATE UNIQUE INDEX categories_credit_card ON categories(credit_card_account_id)
+         WHERE credit_card_account_id IS NOT NULL`,
+      `INSERT INTO category_groups (id, name, sort, hidden, created_at)
+         SELECT 'credit-card-payments', 'Credit Card Payments',
+           COALESCE((SELECT MAX(sort) + 1 FROM category_groups), 0), 0,
+           strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE EXISTS (SELECT 1 FROM accounts WHERE type = 'credit' AND on_budget = 1)`,
+      `INSERT INTO categories (id, group_id, name, need_or_want, sort, hidden, credit_card_account_id, created_at)
+         SELECT 'payment-' || a.id, 'credit-card-payments', a.name, 'need',
+           ROW_NUMBER() OVER (ORDER BY a.created_at, a.rowid) - 1, 0, a.id,
+           strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         FROM accounts a WHERE a.type = 'credit' AND a.on_budget = 1`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

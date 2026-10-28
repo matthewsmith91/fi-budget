@@ -1,10 +1,12 @@
 import { accountsApi, type AccountsApi } from './accounts.ts'
+import { activityApi, type ActivityApi } from './activity.ts'
 import { allocationsApi, type AllocationsApi } from './allocations.ts'
 import { exportJson, importJson, importSqlite } from './budget-file.ts'
 import { changeLog } from './changes.ts'
 import { categoriesApi, type CategoriesApi } from './categories.ts'
 import { newDeviceId } from './hlc.ts'
 import { currentVersion } from './migrations.ts'
+import { reconcileApi, type ReconcileApi } from './reconcile.ts'
 import type { SqlRunner, StorageAdapter } from './storage.ts'
 import {
   createSyncEngine,
@@ -35,7 +37,8 @@ export interface ImportResult {
 }
 
 /** Everything the UI may ask of the domain layer. Grows each phase. */
-export interface BudgetApi extends AccountsApi, CategoriesApi, AllocationsApi, TransactionsApi {
+export interface BudgetApi
+  extends AccountsApi, CategoriesApi, AllocationsApi, TransactionsApi, ReconcileApi, ActivityApi {
   getStatus(): Promise<AppStatus>
   getHousehold(): Promise<Household | null>
   createHousehold(input: { name: string; members: string[] }): Promise<Household>
@@ -100,6 +103,8 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...categoriesApi(crud),
     ...allocationsApi(crud),
     ...transactionsApi(crud),
+    ...reconcileApi(crud),
+    ...activityApi({ ...crud, deviceId, mode: sync ? 'sync' : 'local' }),
     async getStatus() {
       return {
         schemaVersion: await adapter.transaction((tx) => currentVersion(tx)),

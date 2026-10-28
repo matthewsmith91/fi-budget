@@ -511,6 +511,8 @@ main {
   border: 1px solid var(--line);
   border-radius: 0.6rem;
   overflow-x: auto;
+  /* so absolutely positioned .sr-only labels inside can't widen the page */
+  position: relative;
 }
 
 table {
@@ -767,6 +769,19 @@ tr:focus-within .row-actions {
   margin: 0.4rem 0;
 }
 
+.split-line td {
+  padding-top: 0;
+}
+
+.split-total {
+  color: var(--muted);
+}
+
+.edit-row .num:not(:has(input)) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- dialog ---------- */
 
 .dialog {
@@ -891,6 +906,105 @@ tr:focus-within .row-actions {
     min-width: 40rem;
   }
 
+  /* While editing, stack the fields instead of scrolling a wide table. */
+  .register.editing {
+    min-width: 0;
+  }
+
+  /* Grid rows inside a real table get shrink-wrapped, so drop the table layout too. */
+  .register.editing,
+  .register.editing tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .register.editing thead {
+    display: none;
+  }
+
+  .register.editing .txn-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .register.editing .txn-row td {
+    flex: 1 1 auto;
+  }
+
+  .register.editing td:empty:not(.cleared-col) {
+    display: none;
+  }
+
+  .register.editing .edit-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem 0.5rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--row-hover);
+  }
+
+  .register.editing .edit-row td {
+    display: block;
+    padding: 0;
+    min-width: 0;
+  }
+
+  .register.editing .edit-row td[data-label='Payee'],
+  .register.editing .edit-row td[data-label='Category'] {
+    grid-column: 1 / -1;
+  }
+
+  .register.editing .edit-row td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .register.editing .edit-row .split-gap,
+  .register.editing .edit-row .cleared-col:empty {
+    display: none;
+  }
+
+  .register.editing .split-line {
+    border-top: 1px solid var(--line);
+  }
+
+  .register.editing .split-line .cleared-col {
+    grid-column: 1 / -1;
+    text-align: right !important;
+    width: auto;
+  }
+
+  .register.editing .edit-actions,
+  .register.editing .edit-actions td {
+    display: block;
+    width: 100%;
+  }
+
+  .register.editing .edit-actions td {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.25rem 0.75rem 0.75rem;
+  }
+
+  .register.editing .edit-actions .error {
+    float: none;
+    flex-basis: 100%;
+  }
+
+  .register.editing .edit-actions .spacer {
+    flex: 1;
+  }
+
+  .register.editing .edit-actions button {
+    margin-left: 0;
+  }
+
   .row-actions {
     opacity: 1;
   }
@@ -925,4 +1039,51 @@ tr:focus-within .row-actions {
 .invite img {
   background: #fff;
   border-radius: 0.4rem;
+}
+
+/* ---------- activity ---------- */
+
+.activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--surface);
+}
+
+.activity-item {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.15rem 1rem;
+  padding: 0.65rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-item:last-child {
+  border-bottom: 0;
+}
+
+.activity-item.deleted .activity-summary {
+  color: var(--muted);
+}
+
+.activity-meta {
+  font-size: 0.85rem;
+}
+
+.card form.inline {
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.dialog label.check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.dialog label.check input {
+  width: auto;
 }

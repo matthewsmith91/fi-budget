@@ -119,6 +119,102 @@ describe('transactions', () => {
     expect((await api.updateTransaction(t.id, { cleared: true })).cleared).toBe(true)
   })
 
+  it('creates a split transaction whose amount is the sum of its lines', async () => {
+    const { api, checking, food, rent } = await makeApi()
+    const t = await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-01-02',
+      payee: 'Target',
+      splits: [
+        { categoryId: food.id, amount: -3000 },
+        { categoryId: rent.id, amount: -1250 },
+        { categoryId: null, amount: -500 },
+      ],
+    })
+    expect(t.amount).toBe(-4750)
+    expect(t.splits.map((s) => [s.categoryId, s.amount])).toEqual([
+      [food.id, -3000],
+      [rent.id, -1250],
+      [null, -500],
+    ])
+    expect((await api.getAccountBalances()).find((b) => b.accountId === checking.id)?.balance).toBe(
+      -4750,
+    )
+  })
+
+  it('rejects bad splits', async () => {
+    const { api, checking, food } = await makeApi()
+    const base = { accountId: checking.id, date: '2026-01-02' }
+    await expect(api.createTransaction({ ...base, splits: [] })).rejects.toThrow(/at least one/)
+    await expect(
+      api.createTransaction({ ...base, splits: [{ categoryId: food.id, amount: 0 }] }),
+    ).rejects.toThrow(/needs an amount/)
+    await expect(
+      api.createTransaction({ ...base, splits: [{ categoryId: food.id, amount: 1.5 }] }),
+    ).rejects.toThrow(/whole number/)
+    await expect(
+      api.createTransaction({
+        ...base,
+        splits: [
+          { categoryId: food.id, amount: -100 },
+          { categoryId: null, amount: 100 },
+        ],
+      }),
+    ).rejects.toThrow(/cannot be zero/)
+    await expect(
+      api.createTransaction({ ...base, splits: [{ categoryId: 'nope', amount: -100 }] }),
+    ).rejects.toThrow(/Category not found/)
+    expect(await api.listTransactions()).toEqual([])
+  })
+
+  it('replaces splits on update, keeping rows by position', async () => {
+    const { api, adapter, checking, food, rent } = await makeApi()
+    const t = await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-01-02',
+      categoryId: food.id,
+      amount: -1000,
+    })
+    const split = await api.updateTransaction(t.id, {
+      splits: [
+        { categoryId: food.id, amount: -600 },
+        { categoryId: rent.id, amount: -900 },
+      ],
+    })
+    expect(split.amount).toBe(-1500)
+    expect(split.splits.map((s) => s.amount)).toEqual([-600, -900])
+    expect(split.splits[0]!.id).toBe(t.splits[0]!.id)
+
+    const before = (await listMessages(adapter)).length
+    const merged = await api.updateTransaction(t.id, {
+      splits: [{ categoryId: rent.id, amount: -1500 }],
+    })
+    expect(merged.amount).toBe(-1500)
+    expect(merged.splits).toEqual([expect.objectContaining({ id: t.splits[0]!.id })])
+    expect(merged.splits[0]).toMatchObject({ categoryId: rent.id, amount: -1500 })
+    const logged = (await listMessages(adapter)).slice(before)
+    expect(logged.filter((m) => m.column === '_deleted').map((m) => m.table)).toEqual([
+      'transaction_splits',
+    ])
+    expect(await adapter.query('SELECT 1 FROM transaction_splits')).toHaveLength(1)
+  })
+
+  it('refuses splits combined with a category or amount, and splits on locked transactions', async () => {
+    const { api, adapter, checking, food } = await makeApi()
+    const t = await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-01-02',
+      amount: -100,
+    })
+    await expect(
+      api.updateTransaction(t.id, { amount: -50, splits: [{ categoryId: food.id, amount: -50 }] }),
+    ).rejects.toThrow(/not both/)
+    await adapter.exec('UPDATE transactions SET reconciled = 1 WHERE id = ?', [t.id])
+    await expect(
+      api.updateTransaction(t.id, { splits: [{ categoryId: food.id, amount: -100 }] }),
+    ).rejects.toThrow(/reconciled/)
+  })
+
   it('locks reconciled transactions', async () => {
     const { api, adapter, checking } = await makeApi()
     const t = await api.createTransaction({

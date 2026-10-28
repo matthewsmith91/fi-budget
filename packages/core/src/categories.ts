@@ -1,4 +1,5 @@
 import { assertSameIds, cleanName, flag, type CrudDeps } from './crud.ts'
+import type { ChangeLog } from './changes.ts'
 import type { SqlRunner } from './storage.ts'
 
 export const NEED_OR_WANT = ['need', 'want'] as const
@@ -10,6 +11,11 @@ export interface Category {
   name: string
   needOrWant: NeedOrWant
   hidden: boolean
+  /**
+   * Set on a credit card's payment category: the card whose purchases fund it and whose
+   * payments draw it down. The app manages these; they can't be renamed, moved or deleted.
+   */
+  creditCardAccountId: string | null
 }
 
 export interface CategoryGroup {
@@ -58,6 +64,7 @@ interface CategoryRow {
   name: string
   need_or_want: NeedOrWant
   hidden: number
+  credit_card_account_id: string | null
 }
 
 const toCategory = (r: CategoryRow): Category => ({
@@ -66,9 +73,11 @@ const toCategory = (r: CategoryRow): Category => ({
   name: r.name,
   needOrWant: r.need_or_want,
   hidden: r.hidden === 1,
+  creditCardAccountId: r.credit_card_account_id,
 })
 
-const CATEGORY_SELECT = 'SELECT id, group_id, name, need_or_want, hidden FROM categories'
+const CATEGORY_SELECT =
+  'SELECT id, group_id, name, need_or_want, hidden, credit_card_account_id FROM categories'
 
 async function categoriesIn(db: SqlRunner, groupId: string): Promise<Category[]> {
   const rows = await db.query<CategoryRow & Record<string, never>>(
@@ -135,6 +144,66 @@ async function assertCategoryNameFree(
 
 function assertNeedOrWant(value: string) {
   if (!NEED_OR_WANT.includes(value as NeedOrWant)) throw new Error(`Unknown tag "${value}"`)
+}
+
+export const PAYMENT_GROUP_ID = 'credit-card-payments'
+export const paymentCategoryId = (accountId: string) => `payment-${accountId}`
+
+/**
+ * Gives a budget credit card its payment category (and the group that holds them), under
+ * deterministic ids so two devices that add a card offline end up with one row each.
+ * Brings a hidden one back when `unhide` is set.
+ */
+export async function ensurePaymentCategory(
+  tx: SqlRunner,
+  changes: ChangeLog,
+  account: { id: string; name: string },
+  at: string,
+  /** Show the category again if it was hidden; leave a hidden one alone otherwise. */
+  unhide = true,
+): Promise<void> {
+  const [group] = await tx.query('SELECT 1 AS x FROM category_groups WHERE id = ?', [
+    PAYMENT_GROUP_ID,
+  ])
+  if (!group) {
+    await changes.insert('category_groups', {
+      id: PAYMENT_GROUP_ID,
+      name: 'Credit Card Payments',
+      sort: await nextSort(tx, 'category_groups'),
+      hidden: 0,
+      created_at: at,
+    })
+  }
+  const id = paymentCategoryId(account.id)
+  const [existing] = await tx.query('SELECT 1 AS x FROM categories WHERE id = ?', [id])
+  if (existing) {
+    await changes.update('categories', id, {
+      name: account.name,
+      ...(unhide && { hidden: 0 }),
+    })
+    return
+  }
+  await changes.insert('categories', {
+    id,
+    group_id: PAYMENT_GROUP_ID,
+    name: account.name,
+    need_or_want: 'need',
+    sort: await nextSort(tx, 'categories', PAYMENT_GROUP_ID),
+    hidden: 0,
+    credit_card_account_id: account.id,
+    created_at: at,
+  })
+}
+
+/** Hides a card's payment category, e.g. once the account leaves the budget. */
+export async function hidePaymentCategory(
+  tx: SqlRunner,
+  changes: ChangeLog,
+  accountId: string,
+): Promise<void> {
+  const id = paymentCategoryId(accountId)
+  const [existing] = await tx.query('SELECT 1 AS x FROM categories WHERE id = ?', [id])
+  if (existing) await changes.update('categories', id, { hidden: 1 })
 }
 
 export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): CategoriesApi {
@@ -231,6 +300,14 @@ export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): 
       if (patch.needOrWant !== undefined) assertNeedOrWant(patch.needOrWant)
       return adapter.transaction(async (tx) => {
         const current = await getCategory(tx, id)
+        if (
+          current.creditCardAccountId &&
+          (patch.name !== undefined || patch.groupId !== undefined)
+        ) {
+          throw new Error(
+            'A credit card payment category follows its card; rename the account instead',
+          )
+        }
         const name = patch.name === undefined ? current.name : cleanName(patch.name, 'Category')
         const groupId = patch.groupId ?? current.groupId
         const moved = groupId !== current.groupId
@@ -248,7 +325,10 @@ export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): 
     },
     async deleteCategory(id) {
       await adapter.transaction(async (tx) => {
-        await getCategory(tx, id)
+        const category = await getCategory(tx, id)
+        if (category.creditCardAccountId) {
+          throw new Error('A credit card payment category goes with its card; hide it instead')
+        }
         const [used] = await tx.query(
           `SELECT 1 AS x FROM allocations WHERE category_id = ?
            UNION ALL SELECT 1 FROM transaction_splits WHERE category_id = ? LIMIT 1`,
@@ -271,4 +351,20 @@ export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): 
       })
     },
   }
+}
+
+/** Removes a card's payment category with the card: deleted if unused, hidden if it has history. */
+export async function dropPaymentCategory(
+  tx: SqlRunner,
+  changes: ChangeLog,
+  accountId: string,
+): Promise<void> {
+  const id = paymentCategoryId(accountId)
+  const [existing] = await tx.query('SELECT 1 AS x FROM categories WHERE id = ?', [id])
+  if (!existing) return
+  const [used] = await tx.query('SELECT 1 AS x FROM allocations WHERE category_id = ? LIMIT 1', [
+    id,
+  ])
+  if (used) await changes.update('categories', id, { hidden: 1 })
+  else await changes.delete('categories', id)
 }

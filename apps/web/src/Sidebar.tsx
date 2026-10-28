@@ -67,6 +67,7 @@ export function Sidebar({
       <nav>
         {link(hrefFor.budget, 'Budget', route.view === 'budget')}
         {link(hrefFor.accounts, 'All Accounts', route.view === 'accounts')}
+        {link(hrefFor.activity, 'Activity', route.view === 'activity')}
 
         <AccountSection title="Budget" total={total(onBudget)} show={onBudget.length > 0}>
           {accountLinks(onBudget)}

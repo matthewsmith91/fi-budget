@@ -217,11 +217,11 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 - [x] Change-message layer: every write produces a message with an HLC timestamp (ready for sync, works without it)
 - [x] Allocations ledger and balance queries (assigned, activity, available)
 - [x] Ready to Assign and month rollover logic, with tests
-- [ ] Transactions and splits, manual entry on mobile and web
-- [ ] Transfers between accounts (paired transactions)
-- [ ] Credit card payment categories: purchase moves funds to the card's category
-- [ ] Reconciliation flow with adjustment transaction
-- [ ] Activity feed from the message log
+- [x] Transactions and splits, manual entry on mobile and web
+- [x] Transfers between accounts (paired transactions)
+- [x] Credit card payment categories: purchase moves funds to the card's category
+- [x] Reconciliation flow with adjustment transaction
+- [x] Activity feed from the message log
 
 ### Phase 2 — Sync and import
 

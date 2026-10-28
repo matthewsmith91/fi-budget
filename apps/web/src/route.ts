@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
 
 export type Route =
-  { view: 'budget' } | { view: 'accounts' } | { view: 'account'; id: string } | { view: 'settings' }
+  | { view: 'budget' }
+  | { view: 'accounts' }
+  | { view: 'account'; id: string }
+  | { view: 'activity' }
+  | { view: 'settings' }
 
 export function parseRoute(hash: string): Route {
   // `#/settings?code=…` is a pairing link; the query is not part of the route
   const [, first, id] = hash.split('?')[0]!.split('/')
   if (first === 'accounts')
     return id ? { view: 'account', id: decodeURIComponent(id) } : { view: 'accounts' }
+  if (first === 'activity') return { view: 'activity' }
   if (first === 'settings') return { view: 'settings' }
   return { view: 'budget' }
 }
@@ -16,6 +21,7 @@ export const hrefFor = {
   budget: '#/budget',
   accounts: '#/accounts',
   account: (id: string) => `#/accounts/${encodeURIComponent(id)}`,
+  activity: '#/activity',
   settings: '#/settings',
 }
 

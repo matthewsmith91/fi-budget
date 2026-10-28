@@ -1,6 +1,7 @@
 import { cents, formatCents } from '@budget-fi/core'
 import { AccountPanel } from './AccountPanel.tsx'
 import { BackupPanel } from './BackupPanel.tsx'
+import { DevicePanel } from './DevicePanel.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery } from './data.ts'
 import type { PersistState } from './hooks.ts'
@@ -39,6 +40,7 @@ export function SettingsView(props: {
           <dd>{formatCents(cents(123456))}</dd>
         </dl>
       </section>
+      <DevicePanel />
       <AccountPanel />
       <BackupPanel onChanged={props.onBackupChanged} />
     </div>

@@ -123,7 +123,8 @@ interface Rolled {
  * with no entries cannot overspend, so only months that have rows need visiting.
  */
 async function rollCategories(db: SqlRunner, month: Month): Promise<Map<string, Rolled>> {
-  // Activity counts only splits that carry a category, on on-budget accounts.
+  // Activity counts only splits that carry a category, on on-budget accounts, plus the
+  // card purchases and payments that flow through each credit card's payment category.
   const rows = await db.query<{
     category_id: string
     month: string
@@ -139,6 +140,22 @@ async function rollCategories(db: SqlRunner, month: Month): Promise<Map<string, 
          JOIN transactions t ON t.id = s.transaction_id
          JOIN accounts a ON a.id = t.account_id
          WHERE s.category_id IS NOT NULL AND a.on_budget = 1 AND substr(t.date, 1, 7) <= ?1
+       UNION ALL
+       -- A card purchase moves its amount into the card's payment category; a refund takes
+       -- it back out.
+       SELECT pc.id, substr(t.date, 1, 7), 0, -s.amount
+         FROM transaction_splits s
+         JOIN transactions t ON t.id = s.transaction_id
+         JOIN accounts a ON a.id = t.account_id
+         JOIN categories pc ON pc.credit_card_account_id = a.id
+         WHERE s.category_id IS NOT NULL AND a.on_budget = 1 AND substr(t.date, 1, 7) <= ?1
+       UNION ALL
+       -- A payment (a transfer into the card) draws the payment category down.
+       SELECT pc.id, substr(t.date, 1, 7), 0, -t.amount
+         FROM transactions t
+         JOIN accounts a ON a.id = t.account_id
+         JOIN categories pc ON pc.credit_card_account_id = a.id
+         WHERE t.transfer_pair_id IS NOT NULL AND a.on_budget = 1 AND substr(t.date, 1, 7) <= ?1
      ) GROUP BY category_id, month ORDER BY category_id, month`,
     [month],
   )

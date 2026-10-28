@@ -4,7 +4,9 @@ import {
   parseCents,
   type Account,
   type CategoryGroup,
+  type SplitInput,
   type Transaction,
+  type TransactionSplit,
 } from '@budget-fi/core'
 import { useState } from 'react'
 import { budget } from './client.ts'
@@ -12,6 +14,8 @@ import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
 import { money, parseDate, shortDate, todayIso } from './format.ts'
 import { Menu } from './Menu.tsx'
+import { ReconcileDialog } from './ReconcileDialog.tsx'
+import { TransferDialog } from './TransferDialog.tsx'
 
 interface Props {
   /** Null shows every account. */
@@ -32,6 +36,8 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
   // 'new' is the blank entry row; otherwise the id of the transaction being edited
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [transferring, setTransferring] = useState(false)
+  const [reconciling, setReconciling] = useState(false)
 
   const account = accountId ? accounts.find((a) => a.id === accountId) : undefined
   const scoped = accountId ? (account ? [account] : []) : accounts.filter((a) => !a.closed)
@@ -121,6 +127,19 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
         <button type="button" disabled={!canAdd} onClick={() => setEditing('new')}>
           + Add Transaction
         </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={accounts.filter((a) => !a.closed).length < 2}
+          onClick={() => setTransferring(true)}
+        >
+          + Add Transfer
+        </button>
+        {account && !account.closed && (
+          <button type="button" className="secondary" onClick={() => setReconciling(true)}>
+            Reconcile
+          </button>
+        )}
         {account && <AccountMenu account={account} run={run} />}
       </div>
 
@@ -131,7 +150,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
       )}
 
       <div className="table-wrap">
-        <table className="register">
+        <table className={editing ? 'register editing' : 'register'}>
           <thead>
             <tr>
               <th scope="col">Date</th>
@@ -155,6 +174,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
               <TransactionRow
                 key="new"
                 transaction={null}
+                transfer={null}
                 accounts={scoped.filter((a) => !a.closed)}
                 defaultAccountId={accountId ?? scoped.find((a) => !a.closed)?.id ?? ''}
                 showAccountColumn={showAccountColumn}
@@ -167,8 +187,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                       accountId: input.accountId,
                       date: input.date,
                       payee: input.payee,
-                      categoryId: input.categoryId,
-                      amount: input.amount,
+                      splits: input.splits,
                     }),
                   ).then(() => undefined)
                 }
@@ -185,16 +204,17 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                   groups={groups.data ?? []}
                   payees={payees}
                   onCancel={() => setEditing(null)}
+                  transfer={transferInfo(t, accountById)}
                   onSave={async (input) => {
-                    await run(() =>
-                      budget.updateTransaction(t.id, {
-                        date: input.date,
-                        payee: input.payee || null,
-                        ...(t.splits.length === 1
-                          ? { categoryId: input.categoryId, amount: input.amount }
-                          : {}),
-                      }),
-                    )
+                    // A transfer has no payee or splits; its amount carries to the other leg.
+                    const patch = t.transferPairId
+                      ? {
+                          date: input.date,
+                          amount: input.splits[0]!.amount,
+                          categoryId: input.splits[0]!.categoryId,
+                        }
+                      : { date: input.date, payee: input.payee || null, splits: input.splits }
+                    await run(() => budget.updateTransaction(t.id, patch))
                     setEditing(null)
                   }}
                   onDelete={async () => {
@@ -215,8 +235,8 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                 >
                   <td>{shortDate(t.date)}</td>
                   {showAccountColumn && <td>{accountById.get(t.accountId)?.name ?? ''}</td>}
-                  <td>{t.payee ?? ''}</td>
-                  <td>{categoryLabel(t, categoryName, accountById.get(t.accountId))}</td>
+                  <td>{payeeLabel(t, accountById)}</td>
+                  <td>{categoryLabel(t, categoryName, accountById)}</td>
                   <td className="num">{t.amount < 0 ? money(-t.amount) : ''}</td>
                   <td className="num">{t.amount > 0 ? money(t.amount) : ''}</td>
                   <td className="cleared-col">
@@ -243,19 +263,53 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
           <p className="empty">No transactions yet.</p>
         )}
       </div>
+
+      {transferring && (
+        <TransferDialog
+          onClose={() => setTransferring(false)}
+          accounts={accounts.filter((a) => !a.closed)}
+          defaultFromId={accountId}
+        />
+      )}
+      {account && reconciling && (
+        <ReconcileDialog onClose={() => setReconciling(false)} account={account} />
+      )}
     </div>
   )
+}
+
+const payeeLabel = (t: Transaction, accounts: Map<string, Account>) =>
+  t.transferPairId
+    ? `Transfer: ${accounts.get(t.transferAccountId ?? '')?.name ?? 'removed account'}`
+    : (t.payee ?? '')
+
+/** What the editor needs to know about a transfer leg; null for an ordinary transaction. */
+function transferInfo(t: Transaction, accounts: Map<string, Account>) {
+  if (!t.transferPairId) return null
+  const mine = accounts.get(t.accountId)
+  const other = accounts.get(t.transferAccountId ?? '')
+  return {
+    label: payeeLabel(t, accounts),
+    // Only the budget side of a transfer to a tracking account takes a category.
+    categoryEditable: !!mine?.onBudget && other !== undefined && !other.onBudget,
+  }
 }
 
 function categoryLabel(
   t: Transaction,
   names: Map<string, string>,
-  account: Account | undefined,
+  accounts: Map<string, Account>,
 ): string {
   if (t.splits.length > 1) return `Split (${t.splits.length})`
+  const account = accounts.get(t.accountId)
   const id = t.splits[0]?.categoryId
   if (id) return names.get(id) ?? 'Unknown category'
   if (!account?.onBudget) return ''
+  if (t.transferPairId) {
+    // Between two budget accounts nothing enters or leaves the budget.
+    const other = accounts.get(t.transferAccountId ?? '')
+    if (!other || other.onBudget) return ''
+  }
   return t.amount > 0 ? 'Inflow: Ready to Assign' : 'Uncategorized'
 }
 
@@ -303,12 +357,37 @@ interface Entry {
   accountId: string
   date: string
   payee: string
-  categoryId: string | null
-  amount: number
+  splits: SplitInput[]
+}
+
+/** A split line as typed: a category and an amount in either the outflow or inflow box. */
+interface Line {
+  categoryId: string
+  outflow: string
+  inflow: string
+}
+
+const emptyLine = (): Line => ({ categoryId: '', outflow: '', inflow: '' })
+
+const lineOf = (s: TransactionSplit): Line => ({
+  categoryId: s.categoryId ?? '',
+  outflow: s.amount < 0 ? plain(-s.amount) : '',
+  inflow: s.amount > 0 ? plain(s.amount) : '',
+})
+
+/** The signed cents a line holds: 0 when empty, a message when it can't be read. */
+function amountOf(line: Line): number | string {
+  const out = line.outflow.trim() === '' ? 0 : parseCents(line.outflow)
+  const into = line.inflow.trim() === '' ? 0 : parseCents(line.inflow)
+  if (out === null || into === null) return 'Enter amounts as dollars, like 42.50'
+  if (out < 0 || into < 0) return 'Amounts must be positive; use Inflow for money in'
+  return into - out
 }
 
 function TransactionRow(props: {
   transaction: Transaction | null
+  /** Set when editing one leg of a transfer: no payee, no splits, a category only sometimes. */
+  transfer: { label: string; categoryEditable: boolean } | null
   accounts: Account[]
   defaultAccountId: string
   showAccountColumn: boolean
@@ -319,63 +398,137 @@ function TransactionRow(props: {
   onDelete?: () => Promise<void>
 }) {
   const { transaction: t } = props
-  const isSplit = (t?.splits.length ?? 0) > 1
   const [fields, setFields] = useState(() => ({
     accountId: props.defaultAccountId,
     date: shortDate(t?.date ?? todayIso()),
     payee: t?.payee ?? '',
-    categoryId: t?.splits[0]?.categoryId ?? '',
-    outflow: t && t.amount < 0 ? plain(-t.amount) : '',
-    inflow: t && t.amount > 0 ? plain(t.amount) : '',
   }))
+  const [lines, setLines] = useState<Line[]>(() => (t ? t.splits.map(lineOf) : [emptyLine()]))
+  const [split, setSplit] = useState(lines.length > 1)
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<typeof fields>) => setFields({ ...fields, ...patch })
+  const setLine = (i: number, patch: Partial<Line>) =>
+    setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const account = props.accounts.find((a) => a.id === fields.accountId)
+
+  const amounts = lines.map(amountOf)
+  const total = amounts.reduce<number>((n, a) => n + (typeof a === 'number' ? a : 0), 0)
+
+  function toggleSplit() {
+    setError(null)
+    if (!split) {
+      setLines([...lines, emptyLine()])
+      return setSplit(true)
+    }
+    const bad = amounts.find((a) => typeof a === 'string')
+    if (bad) return setError(bad as string)
+    // Back to one line: the first line's category carries the whole amount.
+    setLines([
+      {
+        categoryId: lines[0]!.categoryId,
+        outflow: total < 0 ? plain(-total) : '',
+        inflow: total > 0 ? plain(total) : '',
+      },
+    ])
+    setSplit(false)
+  }
 
   async function save() {
     setError(null)
     const date = parseDate(fields.date)
     if (!date) return setError('Enter the date like 10/28/2026')
-    const out = fields.outflow.trim() === '' ? 0 : parseCents(fields.outflow)
-    const into = fields.inflow.trim() === '' ? 0 : parseCents(fields.inflow)
-    if (out === null || into === null) return setError('Enter amounts as dollars, like 42.50')
-    if (out < 0 || into < 0) return setError('Amounts must be positive; use Inflow for money in')
-    const amount = isSplit ? t!.amount : into - out
-    if (amount === 0) return setError('Enter an outflow or an inflow')
+    const bad = amounts.find((a) => typeof a === 'string')
+    if (bad) return setError(bad as string)
+    const splits: SplitInput[] = lines.map((l, i) => ({
+      categoryId: l.categoryId || null,
+      amount: amounts[i] as number,
+    }))
+    if (splits.some((s) => s.amount === 0)) {
+      return setError(
+        split ? 'Every split needs an outflow or an inflow' : 'Enter an outflow or an inflow',
+      )
+    }
     try {
-      await props.onSave({
-        accountId: fields.accountId,
-        date,
-        payee: fields.payee,
-        categoryId: fields.categoryId || null,
-        amount,
-      })
-      if (!t) setFields({ ...fields, payee: '', categoryId: '', outflow: '', inflow: '' })
+      await props.onSave({ accountId: fields.accountId, date, payee: fields.payee, splits })
+      if (!t) {
+        setFields({ ...fields, payee: '' })
+        setLines([emptyLine()])
+        setSplit(false)
+      }
     } catch (err) {
       setError(messageOf(err))
     }
   }
 
-  const incomeOnly = fields.inflow.trim() !== '' && fields.outflow.trim() === ''
-  const blank =
-    account?.onBudget === false ? '—' : incomeOnly ? 'Inflow: Ready to Assign' : 'Uncategorized'
+  const blankFor = (line: Line) =>
+    account?.onBudget === false
+      ? '—'
+      : line.inflow.trim() !== '' && line.outflow.trim() === ''
+        ? 'Inflow: Ready to Assign'
+        : 'Uncategorized'
   const label = t ? 'Edit transaction' : 'New transaction'
   const listId = `payees-${t?.id ?? 'new'}`
+  const columns = props.showAccountColumn ? 7 : 6
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+      e.preventDefault()
+      void save()
+    }
+    if (e.key === 'Escape') props.onCancel()
+  }
+
+  const categorySelect = (line: Line, i: number, name: string) => (
+    <select
+      aria-label={name}
+      value={line.categoryId}
+      disabled={props.transfer !== null && !props.transfer.categoryEditable}
+      onChange={(e) => setLine(i, { categoryId: e.target.value })}
+    >
+      <option value="">{blankFor(line)}</option>
+      {props.groups
+        .filter((g) => !g.hidden)
+        .map((g) => (
+          <optgroup key={g.id} label={g.name}>
+            {g.categories
+              .filter((c) => !c.creditCardAccountId && (!c.hidden || c.id === line.categoryId))
+              .map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+          </optgroup>
+        ))}
+    </select>
+  )
+
+  const amountInputs = (line: Line, i: number, suffix: string) => (
+    <>
+      <td className="num" data-label="Outflow">
+        <input
+          aria-label={`Outflow${suffix}`}
+          inputMode="decimal"
+          placeholder="0.00"
+          value={line.outflow}
+          onChange={(e) => setLine(i, { outflow: e.target.value })}
+        />
+      </td>
+      <td className="num" data-label="Inflow">
+        <input
+          aria-label={`Inflow${suffix}`}
+          inputMode="decimal"
+          placeholder="0.00"
+          value={line.inflow}
+          onChange={(e) => setLine(i, { inflow: e.target.value })}
+        />
+      </td>
+    </>
+  )
 
   return (
     <>
-      <tr
-        className="edit-row"
-        aria-label={label}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
-            e.preventDefault()
-            void save()
-          }
-          if (e.key === 'Escape') props.onCancel()
-        }}
-      >
-        <td>
+      <tr className="edit-row" aria-label={label} onKeyDown={onKeyDown}>
+        <td data-label="Date">
           <input
             aria-label="Date"
             value={fields.date}
@@ -383,7 +536,7 @@ function TransactionRow(props: {
           />
         </td>
         {props.showAccountColumn && (
-          <td>
+          <td data-label="Account">
             <select
               aria-label="Account"
               value={fields.accountId}
@@ -398,12 +551,13 @@ function TransactionRow(props: {
             </select>
           </td>
         )}
-        <td>
+        <td data-label="Payee">
           <input
             autoFocus
             aria-label="Payee"
             list={listId}
-            value={fields.payee}
+            value={props.transfer ? props.transfer.label : fields.payee}
+            disabled={props.transfer !== null}
             onChange={(e) => set({ payee: e.target.value })}
           />
           <datalist id={listId}>
@@ -412,53 +566,52 @@ function TransactionRow(props: {
             ))}
           </datalist>
         </td>
-        <td>
-          <select
-            aria-label="Category"
-            value={fields.categoryId}
-            disabled={isSplit}
-            onChange={(e) => set({ categoryId: e.target.value })}
-          >
-            <option value="">{isSplit ? 'Split' : blank}</option>
-            {props.groups
-              .filter((g) => !g.hidden)
-              .map((g) => (
-                <optgroup key={g.id} label={g.name}>
-                  {g.categories
-                    .filter((c) => !c.hidden || c.id === fields.categoryId)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                </optgroup>
-              ))}
-          </select>
-        </td>
-        <td className="num">
-          <input
-            aria-label="Outflow"
-            inputMode="decimal"
-            placeholder="0.00"
-            disabled={isSplit}
-            value={fields.outflow}
-            onChange={(e) => set({ outflow: e.target.value })}
-          />
-        </td>
-        <td className="num">
-          <input
-            aria-label="Inflow"
-            inputMode="decimal"
-            placeholder="0.00"
-            disabled={isSplit}
-            value={fields.inflow}
-            onChange={(e) => set({ inflow: e.target.value })}
-          />
-        </td>
+        {split ? (
+          <>
+            <td data-label="Category">
+              <span className="split-total">Split ({lines.length})</span>
+            </td>
+            <td className="num" data-label="Outflow">
+              {total < 0 ? money(-total) : ''}
+            </td>
+            <td className="num" data-label="Inflow">
+              {total > 0 ? money(total) : ''}
+            </td>
+          </>
+        ) : (
+          <>
+            <td data-label="Category">{categorySelect(lines[0]!, 0, 'Category')}</td>
+            {amountInputs(lines[0]!, 0, '')}
+          </>
+        )}
         <td />
       </tr>
+      {split &&
+        lines.map((line, i) => (
+          <tr
+            key={i}
+            className="edit-row split-line"
+            aria-label={`Split ${i + 1}`}
+            onKeyDown={onKeyDown}
+          >
+            <td className="split-gap" colSpan={props.showAccountColumn ? 3 : 2} />
+            <td data-label="Category">{categorySelect(line, i, `Category ${i + 1}`)}</td>
+            {amountInputs(line, i, ` ${i + 1}`)}
+            <td className="cleared-col">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Remove split ${i + 1}`}
+                disabled={lines.length <= 2}
+                onClick={() => setLines(lines.filter((_, j) => j !== i))}
+              >
+                ✕
+              </button>
+            </td>
+          </tr>
+        ))}
       <tr className="edit-actions">
-        <td colSpan={props.showAccountColumn ? 7 : 6}>
+        <td colSpan={columns}>
           {error && (
             <span className="error" role="alert">
               {error}
@@ -472,6 +625,20 @@ function TransactionRow(props: {
               onClick={() => void props.onDelete!()}
             >
               Delete
+            </button>
+          )}
+          {split && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setLines([...lines, emptyLine()])}
+            >
+              + Add split
+            </button>
+          )}
+          {!props.transfer && (
+            <button type="button" className="secondary" onClick={toggleSplit}>
+              {split ? 'Unsplit' : 'Split'}
             </button>
           )}
           <button type="button" className="secondary" onClick={props.onCancel}>

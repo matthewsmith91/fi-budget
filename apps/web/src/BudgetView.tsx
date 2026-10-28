@@ -402,6 +402,8 @@ function CategoryMenu(props: {
   run: Run
 }) {
   const { category: c, group, index, run } = props
+  // A card's payment category follows the card, so it can be hidden but not renamed or deleted.
+  const managed = c.creditCardAccountId !== null
   // the group here is the filtered view; reorder against the real order
   const reorder = (by: -1 | 1) =>
     run(async () => {
@@ -417,13 +419,17 @@ function CategoryMenu(props: {
     <Menu
       label={`Options for ${c.name}`}
       items={[
-        {
-          label: 'Rename',
-          onSelect: () => {
-            const name = prompt('Rename category', c.name)
-            if (name !== null) void run(() => budget.updateCategory(c.id, { name }))
-          },
-        },
+        ...(managed
+          ? []
+          : [
+              {
+                label: 'Rename',
+                onSelect: () => {
+                  const name = prompt('Rename category', c.name)
+                  if (name !== null) void run(() => budget.updateCategory(c.id, { name }))
+                },
+              },
+            ]),
         {
           label: c.needOrWant === 'need' ? 'Mark as want' : 'Mark as need',
           onSelect: () =>
@@ -443,12 +449,16 @@ function CategoryMenu(props: {
           disabled: index === group.categories.length - 1,
           onSelect: () => void reorder(1),
         },
-        {
-          label: 'Delete',
-          onSelect: () => {
-            if (confirm(`Delete ${c.name}?`)) void run(() => budget.deleteCategory(c.id))
-          },
-        },
+        ...(managed
+          ? []
+          : [
+              {
+                label: 'Delete',
+                onSelect: () => {
+                  if (confirm(`Delete ${c.name}?`)) void run(() => budget.deleteCategory(c.id))
+                },
+              },
+            ]),
       ]}
     />
   )

@@ -8,6 +8,7 @@ import type { SqlRunner, SqlValue, StorageAdapter } from './storage.ts'
 export const SYNCED_TABLES: readonly string[] = [
   'households',
   'members',
+  'devices',
   'accounts',
   'category_groups',
   'categories',

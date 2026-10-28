@@ -160,6 +160,38 @@ describe('sync between two devices', () => {
     expect(await a.accounts()).toHaveLength(2)
   })
 
+  it('ends up with one payment-category group when both devices add a card offline', async () => {
+    await a.api.createAccount({ name: 'Visa', type: 'credit' })
+    await b.api.createAccount({ name: 'Amex', type: 'credit' })
+    await a.api.syncNow()
+    await b.api.syncNow()
+    await a.api.syncNow()
+    for (const device of [a, b]) {
+      const groups = await device.api.listCategoryGroups()
+      expect(groups.map((g) => g.id)).toEqual(['credit-card-payments'])
+      expect(groups[0]!.categories.map((c) => c.name).sort()).toEqual(['Amex', 'Visa'])
+    }
+  })
+
+  it('delivers both legs of a transfer still paired', async () => {
+    const checking = await a.api.createAccount({ name: 'Checking', type: 'checking' })
+    const savings = await a.api.createAccount({ name: 'Savings', type: 'savings' })
+    await a.api.createTransfer({
+      fromAccountId: checking.id,
+      toAccountId: savings.id,
+      date: '2026-10-28',
+      amount: 12500,
+    })
+    await a.api.syncNow()
+    await b.api.syncNow()
+    const theirs = await b.api.listTransactions()
+    expect(theirs.map((t) => [t.accountId, t.amount, t.transferAccountId])).toEqual([
+      [savings.id, 12500, checking.id],
+      [checking.id, -12500, savings.id],
+    ])
+    expect(await b.api.getAccountBalances()).toEqual(await a.api.getAccountBalances())
+  })
+
   it('lets the newest edit to a field win on both devices, whoever syncs first', async () => {
     const acct = await a.api.createAccount({ name: 'Checking', type: 'checking' })
     await a.api.syncNow()

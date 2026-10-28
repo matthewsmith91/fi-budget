@@ -1,5 +1,6 @@
 import { backupReminderDue } from '@budget-fi/core'
 import { useState } from 'react'
+import { ActivityView } from './ActivityView.tsx'
 import { AddAccountDialog } from './AddAccountDialog.tsx'
 import { BudgetView } from './BudgetView.tsx'
 import { budget } from './client.ts'
@@ -45,6 +46,8 @@ function Shell() {
     content = <SetupView onCreated={refresh} />
   } else if (route.view === 'budget') {
     content = <BudgetView today={now} />
+  } else if (route.view === 'activity') {
+    content = <ActivityView />
   } else if (route.view === 'settings') {
     content = (
       <SettingsView

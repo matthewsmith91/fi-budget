@@ -134,6 +134,7 @@ describe('category groups and categories', () => {
       name: 'X2',
       needOrWant: 'need',
       hidden: true,
+      creditCardAccountId: null,
     })
     await api.updateCategory(x.id, { groupId: b.id })
     const groups = await api.listCategoryGroups()
