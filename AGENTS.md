@@ -2,11 +2,11 @@
 
 ## What is this
 
-A shared household budgeting app for two users (Matt and Jessica) that replaces the YNAB + Empower split. It combines envelope budgeting with real sinking funds, an emergency fund tracked as an allocation of an account (not the whole account), percentage-based income rules (e.g. tithe 10% before anything else), investment goals inside shared brokerage accounts, and retirement / 529 / net-worth planning. It runs on phones and the web, and manual changes sync between both users.
+A shared household budgeting app for two users (Matt and Jessica) that replaces the YNAB + Empower split. It combines envelope budgeting with real sinking funds, an emergency fund tracked as an allocation of an account (not the whole account), percentage-based income rules (e.g. tithe 10% before anything else), investment goals inside shared brokerage accounts, and retirement / 529 / net-worth planning. It is local-first: every device holds the whole budget in SQLite and works alone; an optional sync server (Phase 2) keeps both users' devices in step.
 
 The app tracks and plans; it never moves money. One household, two users, no public sign-up.
 
-The full spec and phased roadmap live in `Household Budget App — Spec & Plan.md` (not in this repo). The project is at Phase 0 (foundations); most of the spec is not yet built.
+The full spec and phased roadmap live in `docs/specs/Household Budget App — Spec & Plan.md`. Phase 0 (foundations) is built; Phase 1 (budget core) is next. The spec is authoritative where this file disagrees.
 
 ## Project Layout
 
@@ -14,19 +14,24 @@ npm workspaces monorepo orchestrated by Turborepo.
 
 ```
 budget-fi/
-├── package.json       # Workspace root (apps/*, packages/*), turbo scripts
-├── turbo.json         # Task pipeline: build, dev, lint, typecheck
+├── package.json       # Workspace root (apps/*, packages/*), turbo + prettier scripts
+├── turbo.json         # Task pipeline: build, dev, lint, typecheck, test
+├── .github/workflows/ci.yml   # format, lint, typecheck, test, build, e2e
 ├── apps/
-│   ├── web/           # React 19 + Vite + TypeScript frontend (oxlint for linting)
-│   │   └── src/       # main.tsx, App.tsx (currently the Vite starter template)
-│   └── api/           # Express 5 + TypeScript server
-│       └── src/       # index.ts (currently only GET /health)
+│   ├── web/           # React 19 + Vite + TypeScript PWA (oxlint for linting)
+│   │   ├── src/       # UI; client.ts is the only handle on the domain layer
+│   │   ├── src/worker/  # budget.worker.ts: opens SQLite in OPFS, runs migrations, serves the RPC API
+│   │   └── e2e/       # Playwright tests against the production build (real Chrome)
+│   └── api/           # Express 5 server; unused until Phase 2 (becomes the sync server)
 └── packages/
+    ├── core/          # @budget-fi/core: pure TS domain layer, no DOM
+    │   └── src/       # money, storage adapter, SQLite adapter, migrations, export/import, RPC, BudgetApi
     └── ui/            # @budget-fi/ui: shared component library (currently empty)
-        └── src/       # index.ts is the public entry point
 ```
 
-**Shared component library:** reusable UI components belong in `packages/` (starting with `packages/ui`), not inside an app. The web interface and the planned mobile apps both consume it, so components there should avoid web-only assumptions where practical. The mobile approach (installable PWA vs. Capacitor wrapper) is still an open question in the spec. Apps import it as `@budget-fi/ui`.
+**Where code goes:** domain logic (anything that touches money or the budget file) goes in `packages/core` so it runs unchanged in the browser worker, in Node tests, and later on the sync server and in Capacitor. The UI never touches SQLite: it calls the `BudgetApi` interface in `packages/core/src/api.ts` through `apps/web/src/client.ts`, and every call is a message to the worker. To add a capability, extend `BudgetApi`, implement it in `createBudgetApi`, and test it against an in-memory database (`openMemoryAdapter` in `test-utils.ts`).
+
+**Shared component library:** reusable UI components belong in `packages/` (starting with `packages/ui`), not inside an app. The web interface and the planned mobile apps both consume it, so components there should avoid web-only assumptions where practical. Apps import it as `@budget-fi/ui`.
 
 ## Commands
 
@@ -36,40 +41,45 @@ Run from the repo root (uses npm 11 and Turborepo):
 npm install            # install all workspace dependencies
 npm run dev            # run all dev servers (web via Vite, api via tsx watch on :3001)
 npm run build          # build all apps
-npm run lint           # lint (currently only apps/web defines a lint task)
-npm run typecheck      # typecheck (currently only apps/api defines a typecheck task)
+npm run lint           # oxlint (apps/web)
+npm run typecheck      # tsc in web, core, api
+npm test               # unit tests (Vitest) in core
+npm run test:e2e       # Playwright against a production build; needs Google Chrome installed
+npm run format         # prettier --write (format:check is what CI runs)
 ```
 
-Per-app, via workspaces:
+Per-package, via workspaces:
 
 ```sh
 npm run dev -w web           # Vite dev server
-npm run dev -w api           # API with tsx watch (PORT env, default 3001)
-npm run build -w web         # tsc -b && vite build
-npm run build -w api         # tsc -> dist/
-npm run start -w api         # node dist/index.js
+npm test -w @budget-fi/core  # core unit tests
+npm run build -w web         # tsc -b && vite build (also generates the service worker)
+npx pwa-assets-generator     # in apps/web: regenerate icons from public/icon.svg
 ```
 
-There is no test runner configured yet.
+The service worker only exists in production builds, so test PWA behavior with `npm run test:e2e` or `npm run build -w web && npx vite preview`.
 
 ## Architecture
 
 **Core design rule:** where money sits (accounts) is separate from what money is for (envelopes/categories/goals). Every balance is derived from an append-only ledger (`allocations`, `transactions`, `unit_events`); nothing stores a running balance. Edits add rows instead of overwriting, which also makes concurrent edits by two people safe.
 
 **Key invariants**
+
 - Category balance = its own allocations + the sum of its goals' balances − spending.
 - Envelopes held in an account can never add up to more than that account's balance.
 - Spending from a goal is a planned draw-down, never flagged as overspending.
 - Investment accounts are tracking accounts: in net worth and goals, not in the monthly budget.
 - Money is **integer cents** in the database and the client. Never use floats for amounts; rounding remainders fall to Ready to Assign.
 
-**Planned stack (per spec)**
-- Frontend: React + Vite + TypeScript, installable as a PWA, TanStack Query for server state.
-- Backend: Supabase (Postgres, Auth, Realtime, Edge Functions). Every table carries `household_id` (enforced by row-level security), `created_by` and `created_at`.
-- Sync: realtime subscriptions on ledger tables; a local-first layer (PowerSync or similar) is planned for offline edits in Phase 6.
-- Import: YNAB API during the transition, SimpleFIN for banks and brokerages. Aggregator tokens live only in server-side functions, never in the client.
-- Shared logic (income rules, unit purchases, month rollovers) runs server-side so both devices get identical results.
+**Stack (per spec)**
 
-**Current state vs. spec:** `apps/api` is an Express server, but the spec calls for Supabase Postgres/Edge Functions for the backend. Which of the two owns server logic is not settled; confirm before building significant server-side features in either place.
+- Local-first: the whole app is a static bundle with SQLite (WASM) inside it. Domain logic runs in a web worker; the UI talks to it through one typed message API (`connect`/`serve` in `packages/core/src/rpc.ts`). There is no business API.
+- Storage: SQLite in OPFS (`opfs-sahpool` VFS) behind the `StorageAdapter` interface. Only one tab can own the database at a time (guarded by a Web Lock). If OPFS is unavailable the worker falls back to memory and the UI warns loudly.
+- Schema changes: append-only versioned migrations in `packages/core/src/migrations.ts`. Never edit a released migration; add a new one. The app refuses to open a file from a newer schema.
+- Per-device settings (last backup time) live in `localStorage`, outside the budget file, so they never sync.
+- Sync (Phase 2): optional. Every write becomes a change message with a hybrid logical clock timestamp; newest-wins per field. The server is a small Node + SQLite service on the same origin as the app (required for passkeys); it relays changes, signs people in and proxies SimpleFIN. `apps/api` is its placeholder.
+- Import: SimpleFIN via the server, YNAB history import once. Aggregator tokens live only on the server, never in the client.
+- Rules that create rows (income rules, unit purchases) use deterministic IDs so two devices converge on one row.
+- Not yet decided: TanStack Query (the worker calls are already async; add it only if caching becomes necessary).
 
-**Testing approach:** credit card and rollover logic is subtle, so build it test-first using real YNAB months as fixtures.
+**Testing approach:** credit card and rollover logic is subtle, so build it test-first using real YNAB months as fixtures. Core tests run the real SQLite engine in memory under Node, so SQL is exercised exactly as in the browser. Property tests (fast-check) cover money arithmetic. Browser-only behavior (OPFS persistence, service worker, tab locking, file import/export) is covered by the Playwright suite in `apps/web/e2e`.
