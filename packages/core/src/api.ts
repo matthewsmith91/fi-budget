@@ -143,7 +143,7 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
       return sync.sync()
     },
     async getSyncStatus() {
-      return sync ? sync.status() : { pending: 0, lastSyncAt: null }
+      return sync ? sync.status() : { linked: false, pending: 0, lastSyncAt: null }
     },
     async getSyncSetup() {
       if (!sync) throw new SyncError('Sync is not available on this device')

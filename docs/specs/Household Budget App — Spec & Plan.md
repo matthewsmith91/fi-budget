@@ -229,7 +229,7 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 - [x] Passkey sign-in for Matt and Jessica; device pairing by one-time code or QR
 - [x] Push and pull of change messages; newest-wins per field; Merkle trie to find divergence
 - [x] Full-file download to set up a new device; upload when a local-only device turns on sync
-- [ ] Sync status banner and unsynced-changes indicator
+- [x] Sync status banner and unsynced-changes indicator
 - [ ] Two-device test suite: same edits offline on both, converge after sync
 - [ ] Bank-sync proxy: SimpleFIN token on the server, fetch on request
 - [ ] Daily server pull into the import queue, applied by the next device

@@ -127,10 +127,27 @@ test('signs in and pairs devices and people, then syncs a new device from the se
 
   // The laptop turns on sync, which uploads its budget to the server
   await laptop.getByRole('button', { name: 'Turn on sync' }).click()
-  await expect(laptop.getByRole('status').filter({ hasText: 'Synced' })).toContainText(
-    'full copy for new devices',
-  )
+  await expect(
+    laptop.getByRole('status').filter({ hasText: 'full copy for new devices' }),
+  ).toBeVisible()
   await expect(laptop.getByRole('button', { name: 'Sync now' })).toBeVisible()
+
+  // The status banner reports the device as synced; a change makes it unsynced until it is sent
+  const banner = laptop.locator('[data-sync]')
+  await expect(banner).toHaveAttribute('data-sync', 'synced')
+  await laptop.context().setOffline(true)
+  await laptop
+    .getByLabel('Budget navigation')
+    .getByRole('button', { name: '+ Add Account' })
+    .click()
+  const dialog = laptop.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Offline account')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await expect(banner).toHaveAttribute('data-sync', 'offline')
+  await expect(banner).toContainText('will sync when you’re back online')
+  await laptop.context().setOffline(false)
+  await expect(banner).toHaveAttribute('data-sync', 'synced')
+  await laptop.getByLabel('Budget navigation').getByRole('link', { name: 'Settings' }).click()
 
   // A brand-new device with no budget pairs, then downloads the household from the server
   const newCode = await invite(laptop, 'Pair another device')

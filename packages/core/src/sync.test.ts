@@ -253,11 +253,16 @@ describe('sync between two devices', () => {
 
   it('tracks how many local changes the server lacks', async () => {
     const never = await Device.create('1111111111111111', server)
-    expect(await never.api.getSyncStatus()).toEqual({ pending: 0, lastSyncAt: null })
+    expect(await never.api.getSyncStatus()).toEqual({
+      linked: false,
+      pending: 0,
+      lastSyncAt: null,
+    })
     await a.api.createAccount({ name: 'Checking', type: 'checking' })
     expect((await a.api.getSyncStatus()).pending).toBe(5)
     await a.api.syncNow()
     expect(await a.api.getSyncStatus()).toEqual({
+      linked: true,
       pending: 0,
       lastSyncAt: new Date(T0).toISOString(),
     })

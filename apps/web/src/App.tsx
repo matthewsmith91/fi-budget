@@ -13,6 +13,7 @@ import { useRoute } from './route.ts'
 import { SettingsView } from './SettingsView.tsx'
 import { SetupView } from './SetupView.tsx'
 import { Sidebar } from './Sidebar.tsx'
+import { SyncBanner } from './SyncBanner.tsx'
 
 export default function App() {
   return (
@@ -100,6 +101,7 @@ function Shell() {
       {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
 
       <main>
+        <SyncBanner />
         {sw.needRefresh && (
           <div className="banner" role="status">
             A new version is ready. <button onClick={sw.applyUpdate}>Update now</button>

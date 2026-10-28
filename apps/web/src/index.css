@@ -245,6 +245,17 @@ main {
   border-color: transparent;
 }
 
+.banner.sync {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.banner.sync.synced {
+  color: var(--muted);
+}
+
 .banner.warn a {
   color: inherit;
 }

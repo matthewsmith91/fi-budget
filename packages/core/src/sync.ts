@@ -264,6 +264,8 @@ export interface SyncSetup {
 }
 
 export interface SyncStatus {
+  /** This device has synced with the server before (or started to); local-only devices have not. */
+  linked: boolean
   /** Local changes the server does not have yet. */
   pending: number
   lastSyncAt: string | null
@@ -501,7 +503,11 @@ export function createSyncEngine(deps: {
       const [row] = await adapter.query<{ n: number }>(
         'SELECT COUNT(*) AS n FROM messages WHERE synced = 0',
       )
-      return { pending: row?.n ?? 0, lastSyncAt: await getState(adapter, LAST_SYNC_KEY) }
+      return {
+        linked: (await getState(adapter, CURSOR_KEY)) !== null,
+        pending: row?.n ?? 0,
+        lastSyncAt: await getState(adapter, LAST_SYNC_KEY),
+      }
     },
     async setup() {
       return {
