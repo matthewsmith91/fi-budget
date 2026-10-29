@@ -10,6 +10,9 @@
   --accent: #2f78c4;
   --accent-fg: #ffffff;
   --focus: #2f78c4;
+  /* chart series, validated against --surface */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
   /* status colours */
   --good-bg: #bfe8b5;
   --good-fg: #1f4d17;
@@ -48,6 +51,8 @@
     --accent: #5b9be0;
     --accent-fg: #0b1424;
     --focus: #7db3ee;
+    --series-1: #3987e5;
+    --series-2: #d95926;
     --good-bg: #2c5a2a;
     --good-fg: #d3f3cc;
     --zero-bg: #2e3650;
@@ -1233,4 +1238,402 @@ ul.plain {
   flex-direction: column;
   gap: 0.2rem;
   font-size: 0.85rem;
+}
+
+/* ---------- investment goals ---------- */
+
+.dialog.wide {
+  width: min(46rem, calc(100vw - 2rem));
+}
+
+.stack.stretch {
+  justify-items: stretch;
+}
+
+.row.spread {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem;
+}
+
+.negative {
+  color: var(--error);
+}
+
+.sub-row th,
+.sub-row td {
+  font-size: 0.9em;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+progress {
+  width: 100%;
+}
+
+.warn {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+/* ---------- planning ---------- */
+
+.hero-figure {
+  margin: 0 0 0.5rem;
+}
+
+.hero-figure strong {
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+.card form.inline.wrap {
+  flex-wrap: wrap;
+  align-items: end;
+  margin-top: 0.75rem;
+}
+
+.card form.inline.wrap input {
+  flex: none;
+  width: 9rem;
+}
+
+.card details {
+  margin: 0.5rem 0;
+}
+
+.tag.retirement {
+  margin-left: 0.3rem;
+}
+
+fieldset.choices {
+  display: grid;
+  gap: 0.5rem;
+  border: 0;
+  padding: 0;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.dialog fieldset.choices label.check {
+  align-items: flex-start;
+}
+
+/* ---------- bills calendar ---------- */
+
+.card-header label.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0.5rem 0;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.calendar-weekday {
+  padding: 0.25rem;
+  background: var(--group-bg);
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.calendar-day {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-height: 4.5rem;
+  padding: 0.25rem;
+  background: var(--surface);
+  font-size: 0.78rem;
+  overflow: hidden;
+}
+
+.calendar-day.blank {
+  background: var(--bg);
+}
+
+.calendar-day.today {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.calendar-date {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.calendar-item {
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.25rem;
+  background: var(--bad-bg);
+  color: var(--bad-fg);
+  overflow-wrap: anywhere;
+}
+
+.calendar-item.income {
+  background: var(--good-bg);
+  color: var(--good-fg);
+}
+
+/* On a phone a week is too narrow for a bill's name: list only the days with something due. */
+@media (max-width: 40rem) {
+  .calendar {
+    grid-template-columns: 1fr;
+  }
+
+  .calendar-weekday,
+  .calendar-day.blank,
+  .calendar-day.quiet:not(.today) {
+    display: none;
+  }
+
+  .calendar-day {
+    min-height: 0;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+  }
+
+  .calendar-date {
+    min-width: 1.5rem;
+    font-size: 0.9rem;
+  }
+}
+
+/* ---------- budget: sticky header, sheets, row buttons ---------- */
+
+/* Ready to Assign and any error stay in view while the categories scroll under them. */
+.budget-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+}
+
+.budget-sticky .page-header {
+  padding-bottom: 0.6rem;
+}
+
+.budget-sticky .error {
+  margin: 0 0 0.5rem;
+}
+
+.load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 0.5rem;
+}
+
+.month-nav .secondary {
+  margin-left: 0.4rem;
+}
+
+button.row-open {
+  flex: 1;
+  min-height: 2.25rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-weight: inherit;
+}
+
+button.row-open:hover {
+  text-decoration: underline;
+}
+
+a.pill {
+  text-decoration: none;
+}
+
+a.pill:hover {
+  text-decoration: underline;
+}
+
+.sheet {
+  padding: 0;
+}
+
+.sheet-body {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.25rem;
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sheet-header h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sheet-tags,
+.sheet-note {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.sheet-figures {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--group-bg);
+  border-radius: 0.5rem;
+}
+
+.sheet-figures dt {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sheet-figures dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.sheet-rename {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 0.5rem;
+}
+
+.sheet-rename label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.sheet-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+.sheet-danger {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.sheet-danger p {
+  margin: 0;
+}
+
+.sheet-confirm {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sheet-confirm p {
+  margin: 0;
+}
+
+@media (max-width: 800px) {
+  /* the top bar keeps one height so the sticky header can sit right under it */
+  :root {
+    --topbar-h: calc(max(0.5rem, env(safe-area-inset-top)) + 44px);
+  }
+
+  .topbar {
+    box-sizing: border-box;
+    min-height: var(--topbar-h);
+  }
+
+  .budget-sticky {
+    top: var(--topbar-h);
+  }
+
+  /* 16px or more, or iOS zooms the page when the box takes focus */
+  .assigned-input,
+  .sheet-rename input {
+    font-size: 16px;
+  }
+
+  .assigned-input {
+    min-height: 44px;
+  }
+
+  .month-nav .icon-button,
+  .name-cell .icon-button,
+  .sheet-header .icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  button.row-open {
+    min-height: 44px;
+  }
+
+  .month-nav .secondary {
+    min-height: 44px;
+  }
+
+  .sheet-actions button,
+  .sheet-rename button,
+  .sheet-danger button,
+  .sheet-confirm button {
+    min-height: 44px;
+  }
+
+  /* a sheet rising from the bottom edge, reachable with a thumb */
+  .dialog.sheet {
+    width: 100%;
+    max-width: none;
+    max-height: 90dvh;
+    margin: auto 0 0;
+    border-radius: 0.9rem 0.9rem 0 0;
+    border-bottom: 0;
+    overflow-y: auto;
+  }
+
+  .sheet-body {
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (max-width: 800px) {
+  .dialog.sheet[open] {
+    animation: sheet-up 0.18s ease-out;
+  }
+
+  @keyframes sheet-up {
+    from {
+      transform: translateY(1.5rem);
+      opacity: 0;
+    }
+  }
 }

@@ -15,6 +15,13 @@ export function cleanName(input: string, what: string): string {
   return name
 }
 
+const DATE = /^\d{4}-\d\d-\d\d$/
+
+export function assertDate(date: string): void {
+  const valid = DATE.test(date) && new Date(`${date}T00:00:00Z`).toISOString().startsWith(date)
+  if (!valid) throw new Error(`"${date}" is not a date (expected YYYY-MM-DD)`)
+}
+
 export const flag = (b: boolean) => (b ? 1 : 0)
 
 /** Ids to reorder must be exactly the ids currently in scope, each once. */

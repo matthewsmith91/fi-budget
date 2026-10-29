@@ -218,11 +218,26 @@ test('budget, accounts and the ledger work together and persist', async ({ page 
   await expect(sidebar(page).getByRole('link', { name: /Ally HYSA/ })).toContainText('$750.00')
   await expect(page.getByRole('row', { name: /Rent/ })).toContainText('$350.00')
 
-  // a group with categories can't be deleted
-  page.once('dialog', (d) => void d.accept())
-  await page.getByRole('button', { name: 'Options for Bills' }).click()
-  await page.getByRole('menuitem', { name: 'Delete' }).click()
-  await expect(page.getByRole('alert').filter({ hasText: 'categories first' })).toBeVisible()
+  // a group with categories can't be deleted, and the sheet says so instead of offering it
+  await page.getByRole('button', { name: 'Bills', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('remove its categories first')
+  await expect(page.getByRole('dialog').getByRole('button', { name: /^Delete/ })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  // a category with history is hidden, not deleted: its money goes back to Ready to Assign
+  // and its transaction keeps it
+  await page.getByRole('button', { name: /^Rent/ }).click()
+  await page.getByRole('button', { name: 'Remove…' }).click()
+  await expect(page.getByRole('dialog')).toContainText('$350.00 goes back to Ready to Assign')
+  await page.getByRole('button', { name: 'Remove Rent' }).click()
+  await expect(page.getByRole('row', { name: /^Rent/ })).toHaveCount(0)
+  await expect(ready).toContainText('$750.00')
+  await page.getByRole('button', { name: 'Show them' }).click()
+  await expect(page.getByRole('row', { name: /^Rent/ })).toBeVisible()
+  await sidebar(page)
+    .getByRole('link', { name: /Ally HYSA/ })
+    .click()
+  await expect(page.getByRole('row', { name: /Landlord/ })).toContainText('Rent')
 })
 
 test('a transaction can be split across categories, on desktop and on a phone', async ({
@@ -332,9 +347,11 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   const payment = page.getByRole('row', { name: /^Visa/ })
   await expect(payment).toBeVisible()
   // the app manages it: no rename or delete
-  await page.getByRole('button', { name: 'Options for Visa' }).click()
-  await expect(page.getByRole('menuitem', { name: 'Rename' })).toHaveCount(0)
-  await expect(page.getByRole('menuitem', { name: 'Delete' })).toHaveCount(0)
+  await payment.getByRole('button').click()
+  const managed = page.getByRole('dialog')
+  await expect(managed.getByRole('button', { name: 'Hide' })).toBeVisible()
+  await expect(managed.getByRole('button', { name: 'Rename' })).toHaveCount(0)
+  await expect(managed.getByRole('button', { name: 'Remove…' })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
   await page.getByLabel('Assigned for Groceries').fill('100')
@@ -659,8 +676,8 @@ test('goals: create, fund, spend from, and archive', async ({ page }) => {
   await page.getByRole('button', { name: 'Add', exact: true }).click()
 
   // a goal with a target and a date far enough out that only the label is stable
-  await page.getByRole('button', { name: 'Options for Household' }).click()
-  await page.getByRole('menuitem', { name: 'Add goal' }).click()
+  await page.getByRole('button', { name: new RegExp('^Household (Need|Want)') }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Add goal' }).click()
   await page.getByLabel('Goal name').fill('Laptop')
   await page.getByLabel('Target amount').fill('1200')
   await page.getByLabel('Target date (optional)').fill('2099-12-31')
@@ -735,8 +752,8 @@ test('goals held in an account warn when they add up to more than the account ha
   await page.getByLabel('New category in Savings').fill('Emergency')
   await page.getByRole('button', { name: 'Add', exact: true }).click()
 
-  await page.getByRole('button', { name: 'Options for Emergency' }).click()
-  await page.getByRole('menuitem', { name: 'Add goal' }).click()
+  await page.getByRole('button', { name: new RegExp('^Emergency (Need|Want)') }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Add goal' }).click()
   await page.getByLabel('Goal name').fill('Six months')
   await page.getByLabel('Target amount').fill('5000')
   await page.getByLabel('Held in account (optional)').selectOption({ label: 'Held in Ally HYSA' })
@@ -789,9 +806,10 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   // a new category is a want until it is marked
   const category = page.getByRole('row', { name: /^Groceries/ })
   await expect(category).toContainText('Want')
-  await page.getByRole('button', { name: 'Options for Groceries' }).click()
-  await page.getByRole('menuitem', { name: 'Mark as need' }).click()
+  await page.getByRole('button', { name: new RegExp('^Groceries (Need|Want)') }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Mark as need' }).click()
   await expect(category).toContainText('Need')
+  await page.keyboard.press('Escape')
 
   // groceries are a need, the wine on the same receipt is a want
   await sidebar(page)
@@ -817,7 +835,7 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
 
   // the report opens on the last complete month; this month's spending is one step on
   await sidebar(page).getByRole('link', { name: 'Reports' }).click()
-  await expect(page.getByRole('heading', { name: 'Needs vs wants' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Reports' })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Average month' })).toContainText('3 months')
   await page.getByRole('button', { name: 'Next month' }).click()
   const thisMonth = page.getByRole('region', { name: 'By month' }).getByRole('row').nth(1)
@@ -927,4 +945,380 @@ test('income rules: a paycheck feeds the tithe, and taking it back reverses that
   // the rule and its work survive a reload
   await page.reload()
   await expect(page.getByRole('row', { name: /^Tithe/ })).toContainText('$0.00')
+})
+
+test('investment goals own units of an account, and Roth contributions count against the limit', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  const dialog = page.getByRole('dialog')
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Account type').selectOption('checking')
+  await dialog.getByLabel('Current balance').fill('5000')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
+
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await dialog.getByLabel('Account name').fill('Brokerage')
+  await dialog.getByLabel('Account type').selectOption('investment')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('heading', { name: 'Brokerage' })).toBeVisible()
+
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await dialog.getByLabel('Account name').fill('Jessica Roth')
+  await dialog.getByLabel('Account type').selectOption('investment')
+  await dialog.getByLabel('Investment type').selectOption({ label: 'IRA' })
+  await dialog.getByLabel('Tax type').selectOption({ label: 'Roth' })
+  await dialog.getByLabel('Owner').selectOption({ label: 'Jessica' })
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('heading', { name: 'Jessica Roth' })).toBeVisible()
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Savings')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Savings' }).click()
+  await page.getByLabel('New category in Savings').fill('Investing')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.getByRole('button', { name: new RegExp('^Investing (Need|Want)') }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Add goal' }).click()
+  await page.getByLabel('Goal name').fill('House')
+  await page.getByLabel('Target amount').fill('50000')
+  await page.getByRole('button', { name: 'Add goal' }).click()
+
+  // a cleared transfer for the goal buys units of the brokerage for it
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('button', { name: '+ Add Transfer' }).click()
+  await dialog.getByLabel('To').selectOption({ label: 'Brokerage' })
+  await dialog.getByLabel('Amount').fill('500')
+  await dialog.getByLabel('Category').selectOption({ label: 'Investing' })
+  await dialog.getByLabel('Goal').selectOption({ label: 'House' })
+  await expect(dialog).toContainText('buys units of Brokerage for the goal')
+  await dialog.getByLabel('Already cleared at the bank').check()
+  await dialog.getByRole('button', { name: 'Add transfer' }).click()
+  await expect(page.getByRole('row', { name: /Transfer: Brokerage/ })).toContainText(
+    'Investing: House',
+  )
+
+  await sidebar(page)
+    .getByRole('link', { name: /^Brokerage/ })
+    .click()
+  await page.getByRole('button', { name: 'Goals', exact: true }).click()
+  const goals = page.getByRole('dialog')
+  const house = goals.getByRole('row', { name: /^House/ })
+  await expect(house).toContainText('500 units')
+  await expect(house).toContainText('$500.00')
+  await expect(house).toContainText('$0.00')
+  await goals.getByRole('button', { name: 'Done' }).click()
+
+  // the account is now worth more: the goal's gain follows, and its cost basis stays
+  await page.getByRole('button', { name: 'Investment settings and values for Brokerage' }).click()
+  await dialog.getByLabel('Market value').fill('600')
+  await dialog.getByRole('button', { name: 'Save value' }).click()
+  await expect(dialog).toContainText('$600.00')
+  await dialog.getByRole('button', { name: 'Done' }).click()
+  await page.getByRole('button', { name: 'Goals', exact: true }).click()
+  await expect(house).toContainText('$600.00')
+  await expect(house).toContainText('+$100.00')
+  await expect(goals.getByRole('row', { name: /^Total/ })).toContainText('$500.00')
+
+  // what the goal owns can be moved to another bucket without a gain or loss
+  await goals.getByLabel('To').selectOption({ label: 'Unassigned' })
+  await goals.getByLabel('From').selectOption({ label: 'House' })
+  await goals.getByLabel('Amount').fill('120')
+  await goals.getByRole('button', { name: 'Move', exact: true }).click()
+  await expect(goals.getByRole('row', { name: /^Unassigned/ })).toContainText('$120.00')
+  await expect(house).toContainText('$480.00')
+  await goals.getByRole('button', { name: 'Done' }).click()
+
+  // a contribution to a Roth IRA counts against its owner's limit
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('button', { name: '+ Add Transfer' }).click()
+  await dialog.getByLabel('To').selectOption({ label: 'Jessica Roth' })
+  await dialog.getByLabel('Amount').fill('1000')
+  await dialog.getByRole('button', { name: 'Add transfer' }).click()
+  await expect(page.getByRole('row', { name: /Transfer: Jessica Roth/ })).toBeVisible()
+  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  const roth = page.getByRole('region', { name: 'Roth IRA contributions' })
+  await expect(roth).toContainText('Jessica')
+  await expect(roth).toContainText('$1,000.00 of $7,500.00')
+  await roth.getByRole('button', { name: /Change Jessica’s limit/ }).click()
+  await roth.getByLabel(/Jessica’s limit for/).fill('8600')
+  await roth.getByRole('button', { name: 'Save limit' }).click()
+  await expect(roth).toContainText('$1,000.00 of $8,600.00')
+  await expect(roth).toContainText('your limit')
+})
+
+test('reports show net worth, a retirement projection and each category’s retirement status', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Current balance').fill('1000')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await dialog.getByLabel('Account name').fill('Work 401k')
+  await dialog.getByLabel('Account type').selectOption('investment')
+  await dialog.getByLabel('Investment type').selectOption({ label: '401(k)' })
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await page.getByRole('button', { name: 'Investment settings and values for Work 401k' }).click()
+  await dialog.getByLabel('Market value').fill('50000')
+  await dialog.getByRole('button', { name: 'Save value' }).click()
+  await expect(dialog).toContainText('$50,000.00')
+  await dialog.getByRole('button', { name: 'Done' }).click()
+
+  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  const netWorth = page.getByRole('region', { name: 'Net worth' })
+  await expect(netWorth).toContainText('$51,000.00')
+  await expect(netWorth.getByRole('img', { name: /Net worth by month/ })).toBeVisible()
+  await expect(netWorth).toContainText('Work 401k')
+
+  // no birth month, no projection
+  const retirement = page.getByRole('region', { name: 'Retirement projection' })
+  await expect(retirement).toContainText('Enter a birth month')
+  await expect(retirement).toContainText('Work 401k ($50,000.00)')
+  await retirement.getByLabel('Birth month').fill('1996-01')
+  await retirement.getByLabel('Target age').fill('40')
+  await retirement.getByLabel('Monthly contribution').fill('1000')
+  await retirement.getByLabel('Yearly return').fill('3')
+  await retirement.getByLabel('Yearly inflation').fill('3')
+  await retirement.getByRole('button', { name: 'Save' }).click()
+  // no growth after inflation, so only the contributions add up
+  await expect(
+    retirement.getByRole('img', { name: /Projected retirement portfolio/ }),
+  ).toBeVisible()
+  await expect(retirement.locator('.hero-figure')).toContainText('$')
+  await expect(retirement).toContainText('Still to contribute')
+
+  // a bad value is refused inline and keeps what was saved
+  await retirement.getByLabel('Target age').fill('20')
+  await retirement.getByRole('button', { name: 'Save' }).click()
+  await expect(retirement.getByRole('alert')).toContainText('target age')
+
+  // a category's status in retirement is set from its menu and survives a reload
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Bills')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Bills' }).click()
+  await page.getByLabel('New category in Bills').fill('Travel')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.getByRole('button', { name: new RegExp('^Travel (Need|Want)') }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'In retirement…' }).click()
+  const status = page.getByRole('dialog')
+  await status.getByLabel(/^Changes/).check()
+  await status.getByLabel('Multiplier').fill('1.5')
+  await status.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Travel/ })).toContainText('×1.5')
+  await page.reload()
+  await expect(page.getByRole('row', { name: /Travel/ })).toContainText('×1.5')
+
+  await page.getByRole('button', { name: new RegExp('^Travel (Need|Want)') }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'In retirement…' }).click()
+  await status.getByLabel(/^Ends/).check()
+  await status.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Travel/ })).toContainText('Ends')
+})
+
+/** `YYYY-MM-DD` for today plus `days`, in the browser's local time like the app. */
+function isoIn(days: number) {
+  const d = new Date()
+  d.setDate(d.getDate() + days)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+test('bills feed a cash-flow forecast, and the monthly review fixes an overspent category', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Current balance').fill('2000')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+
+  // a bill that fits is fine; one that does not is called out with the day it happens
+  await sidebar(page).getByRole('link', { name: 'Bills', exact: true }).click()
+  const forecast = page.getByRole('region', { name: 'Cash-flow forecast' })
+  await expect(forecast).toContainText('Cash stays above zero')
+  const items = page.getByRole('region', { name: 'Recurring bills and income' })
+  const add = async (payee: string, amount: string, date: string) => {
+    await items.getByLabel('Recurring payee').fill(payee)
+    await items.getByLabel('Recurring amount').fill(amount)
+    await items.getByLabel('Recurring next due').fill(date)
+    // yearly, so exactly one occurrence falls in the forecast whatever day this runs
+    await items.getByLabel('Recurring cadence').selectOption('yearly')
+    await items.getByRole('button', { name: 'Add item' }).click()
+    await expect(items.getByRole('row', { name: new RegExp(payee) })).toBeVisible()
+  }
+  await add('Landlord', '1500', isoIn(1))
+  await expect(forecast).toContainText('Cash stays above zero')
+  await add('Insurance', '1000', isoIn(3))
+  await expect(forecast).toContainText('Cash runs out')
+  await expect(forecast.getByRole('img', { name: /Projected cash/ })).toBeVisible()
+  await expect(forecast).toContainText('-$500.00')
+
+  // the calendar shows what is due, and a bad form is refused inline
+  const calendar = page.getByRole('region', { name: 'Bills calendar' })
+  await expect(calendar).toContainText('Landlord')
+  await items.getByRole('button', { name: 'Add item' }).click()
+  await expect(items.getByRole('alert')).toContainText('paid to')
+
+  // marking a bill paid moves it a year on, so the forecast no longer counts it
+  await items.getByRole('button', { name: 'Mark Insurance paid' }).click()
+  await expect(forecast).toContainText('Cash stays above zero')
+  await items.getByRole('button', { name: 'Delete Landlord' }).click()
+  await expect(items.getByRole('row', { name: /Landlord/ })).toHaveCount(0)
+
+  // an overspent category shows up in the review with a move that covers it
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Everyday')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Everyday' }).click()
+  await page.getByLabel('New category in Everyday').fill('Groceries')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.getByLabel('Assigned for Groceries').fill('100')
+  await page.getByLabel('Assigned for Groceries').press('Enter')
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await page.getByLabel('Payee').fill('Market')
+  await page.getByLabel('Category').selectOption({ label: 'Groceries' })
+  await page.getByLabel('Outflow').fill('150')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Market/ })).toContainText('$150.00')
+
+  await sidebar(page).getByRole('link', { name: 'Review', exact: true }).click()
+  const went = page.getByRole('region', { name: 'Went over' })
+  await expect(went).toContainText('Groceries')
+  await expect(went).toContainText('$50.00 over')
+  const moves = page.getByRole('region', { name: 'Suggested moves' })
+  await expect(moves).toContainText('Move $50.00 from Ready to Assign to Groceries')
+  await moves.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByRole('region', { name: 'Went over' })).toHaveCount(0)
+  await expect(page.getByText('Nothing needs fixing.')).toBeVisible()
+})
+
+test('reports estimate retirement spending, check it against the portfolio and plan a 529', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+
+  async function addAccount(name: string, type: string, balance: string, kind?: string) {
+    await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Account name').fill(name)
+    await dialog.getByLabel('Account type').selectOption(type)
+    if (kind) await dialog.getByLabel('Investment type').selectOption({ label: kind })
+    if (!kind) await dialog.getByLabel('Current balance').fill(balance)
+    await dialog.getByRole('button', { name: 'Add account' }).click()
+  }
+  await addAccount('Checking', 'checking', '5000')
+  await addAccount('College 529', 'investment', '', '529 plan')
+
+  // a category with spending that continues
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Everyday')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Everyday' }).click()
+  await page.getByLabel('New category in Everyday').fill('Rent')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await page.getByLabel('Payee').fill('Landlord')
+  await page.getByLabel('Category').selectOption({ label: 'Rent' })
+  await page.getByLabel('Outflow').fill('2000')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Landlord/ })).toContainText('$2,000.00')
+
+  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  // the report opens on the last complete month; step forward to the one with the spending
+  await page.getByRole('button', { name: 'Next month' }).click()
+  const spend = page.getByRole('region', { name: 'Retirement spending' })
+  // $2,000 a month at a 4% withdrawal rate needs $600,000
+  await expect(spend.locator('.hero-figure')).toContainText('$600,000.00')
+  await expect(spend).toContainText('$24,000.00 a year')
+  await expect(spend.getByRole('row', { name: /Rent/ })).toContainText('$2,000.00')
+
+  // a cost that doesn't exist today is added on, and can be edited and removed
+  await spend.getByLabel('Cost name').fill('Health insurance')
+  await spend.getByLabel('Cost per year').fill('12000')
+  await spend.getByRole('button', { name: 'Add cost' }).click()
+  await expect(spend).toContainText('Health insurance')
+  await expect(spend).toContainText('all of retirement')
+  await expect(spend.locator('.hero-figure')).toContainText('$900,000.00')
+  await spend.getByRole('button', { name: 'Edit Health insurance' }).click()
+  await spend.getByLabel('Cost end age').fill('60')
+  await spend.getByRole('button', { name: 'Save cost' }).click()
+  await expect(spend).toContainText('until 60')
+  await expect(spend).toContainText('not at 65')
+  await expect(spend.locator('.hero-figure')).toContainText('$600,000.00')
+
+  // a bad value is refused inline
+  await spend.getByLabel('Withdrawal rate').fill('0')
+  await spend.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(spend.getByRole('alert')).toContainText('withdrawal rate')
+  await spend.getByLabel('Withdrawal rate').fill('5')
+  await spend.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(spend.locator('.hero-figure')).toContainText('$480,000.00')
+
+  // with no portfolio the check says why; a birth month brings the comparison
+  await expect(spend).toContainText('Enter a birth month')
+  const retirement = page.getByRole('region', { name: 'Retirement projection' })
+  await retirement.getByLabel('Birth month').fill('1996-01')
+  await retirement.getByRole('button', { name: 'Save' }).click()
+  await expect(spend.getByRole('status').filter({ hasText: 'Short by' })).toBeVisible()
+  // saving the projection's form kept the spending assumptions
+  await expect(spend.getByLabel('Withdrawal rate')).toHaveValue('5')
+
+  // a 529 plan
+  const education = page.getByRole('region', { name: 'Education savings' })
+  await education.getByLabel('Plan name').fill('Emma')
+  await education.getByLabel('Plan account').selectOption({ label: 'College 529' })
+  await education.getByLabel('Education cost').fill('80000')
+  await education.getByLabel('Plan month').fill('2040-08')
+  await education.getByLabel('Plan contribution').fill('200')
+  await education.getByRole('button', { name: 'Add plan' }).click()
+  await expect(education).toContainText('Emma')
+  await expect(education).toContainText('short by')
+  await expect(education).toContainText('a month would close it')
+  // saving more a month gets there; the plan is edited in place, not duplicated
+  await education.getByRole('button', { name: 'Edit Emma’s plan' }).click()
+  await education.getByLabel('Plan contribution').fill('5000')
+  await education.getByRole('button', { name: 'Save plan' }).click()
+  await expect(education).toContainText('on track')
+  await expect(education.getByLabel('Emma’s education savings')).toHaveCount(1)
+
+  // it all survives a reload
+  await page.reload()
+  await page.getByRole('button', { name: 'Next month' }).click()
+  await expect(page.getByRole('region', { name: 'Retirement spending' })).toContainText(
+    'Health insurance',
+  )
+  await expect(page.getByRole('region', { name: 'Education savings' })).toContainText('Emma')
+
+  await page.getByRole('button', { name: 'Delete Emma’s plan' }).click()
+  await expect(page.getByRole('region', { name: 'Education savings' })).toContainText(
+    'Add a plan for each child',
+  )
 })

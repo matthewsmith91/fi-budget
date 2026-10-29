@@ -350,6 +350,147 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX transactions_reverses ON transactions(reverses_id) WHERE reverses_id IS NOT NULL`,
     ],
   },
+  {
+    version: 16,
+    name: 'unit-ledger',
+    // What goals own inside an investment account. `unit_events` is the ledger: `units` is in
+    // millionths of a unit so sums are exact, `unit_price` is cents per whole unit as it was
+    // when the row was written, `amount` the cash value in cents and `basis` the cost of the
+    // units (for a sell, the cost taken out, so realized gain is amount - basis). A null
+    // goal_id is the account's Unassigned part. A row made by a transaction has a
+    // deterministic id built from `transaction_id`, so two devices converge on one row; it is
+    // voided rather than deleted when the transaction stops qualifying, because a delete is
+    // permanent. `batch_id` ties the rows of one manual entry (both sides of a move).
+    // A holding is one investment (a fund, a stock) that a goal owns in a holdings-mode
+    // account; its price is the latest one entered, in cents per share. Events on a holding
+    // carry holding_id and no goal_id, so moving a holding to another goal is one update.
+    // `contribution_limits` holds a household's own annual IRA limit for a person and year;
+    // a null amount means the built-in default applies (rows are never deleted).
+    up: [
+      `CREATE TABLE holdings (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        goal_id TEXT REFERENCES goals(id),
+        name TEXT NOT NULL,
+        price REAL CHECK (price IS NULL OR price > 0),
+        price_date TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX holdings_account ON holdings(account_id)`,
+      `CREATE TABLE unit_events (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        goal_id TEXT REFERENCES goals(id),
+        holding_id TEXT REFERENCES holdings(id),
+        transaction_id TEXT,
+        batch_id TEXT,
+        type TEXT NOT NULL CHECK (type IN ('buy', 'sell', 'dividend', 'move_in', 'move_out')),
+        units INTEGER NOT NULL CHECK (units >= 0),
+        unit_price REAL NOT NULL CHECK (unit_price > 0),
+        amount INTEGER NOT NULL CHECK (amount >= 0),
+        basis INTEGER NOT NULL CHECK (basis >= 0),
+        date TEXT NOT NULL CHECK (date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'),
+        voided INTEGER NOT NULL DEFAULT 0 CHECK (voided IN (0, 1)),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX unit_events_account ON unit_events(account_id, date)`,
+      `CREATE INDEX unit_events_goal ON unit_events(goal_id) WHERE goal_id IS NOT NULL`,
+      `CREATE INDEX unit_events_holding ON unit_events(holding_id) WHERE holding_id IS NOT NULL`,
+      `CREATE INDEX unit_events_transaction ON unit_events(transaction_id)
+         WHERE transaction_id IS NOT NULL`,
+      `CREATE TABLE contribution_limits (
+        id TEXT PRIMARY KEY,
+        member_id TEXT NOT NULL REFERENCES members(id),
+        year INTEGER NOT NULL,
+        amount INTEGER CHECK (amount IS NULL OR amount >= 0),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 17,
+    name: 'retirement-planning',
+    // What a category does once paychecks stop: it continues, ends (529 contributions, a
+    // mortgage that gets paid off) or changes by a multiplier (travel x1.5). The multiplier
+    // only means something for 'changes'; the API clears it otherwise, and a 'changes'
+    // category with none reads as x1, because two devices editing offline may each win one
+    // column. `retirement_assumptions` is one row per household (the API gives it the id
+    // 'retirement', so two devices that save first converge on one row): `birth_month` is
+    // the month of the person the projection follows, `monthly_contribution` is cents a month
+    // into retirement accounts, and both rates are percent per year. Nothing but the birth
+    // month is nullable; the API writes every value when it creates the row.
+    up: [
+      `ALTER TABLE categories ADD COLUMN retirement_status TEXT NOT NULL DEFAULT 'continues'
+         CHECK (retirement_status IN ('continues', 'ends', 'changes'))`,
+      `ALTER TABLE categories ADD COLUMN retirement_multiplier REAL
+         CHECK (retirement_multiplier IS NULL OR retirement_multiplier > 0)`,
+      `CREATE TABLE retirement_assumptions (
+        id TEXT PRIMARY KEY,
+        birth_month TEXT CHECK (birth_month IS NULL
+          OR birth_month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'),
+        target_age INTEGER NOT NULL,
+        monthly_contribution INTEGER NOT NULL CHECK (monthly_contribution >= 0),
+        return_rate REAL NOT NULL,
+        inflation_rate REAL NOT NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+    ],
+  },
+  {
+    version: 18,
+    name: 'planning',
+    // The retirement spending model, 529 plans and recurring bills. The two new assumptions
+    // have defaults, so a row an older device wrote (without them) still rebuilds on sync.
+    // A fixed item's age window is `start_age <= age < end_age`; either end may be missing.
+    // An education plan may name a 529 (or other investment) account and, inside it, the goal
+    // that holds one child's share; both links are cleared when the account or goal goes.
+    // A recurring item's `amount` is signed (a bill is negative, a paycheck positive) and its
+    // `next_date` is the next occurrence nobody has dealt with yet; `anchor_day` keeps a
+    // monthly bill on the 31st from drifting to the 28th after a short month.
+    up: [
+      `ALTER TABLE retirement_assumptions ADD COLUMN withdrawal_rate REAL NOT NULL DEFAULT 4`,
+      `ALTER TABLE retirement_assumptions ADD COLUMN lookback_months INTEGER NOT NULL DEFAULT 12`,
+      `CREATE TABLE retirement_fixed_items (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        annual_amount INTEGER NOT NULL CHECK (annual_amount > 0),
+        start_age INTEGER CHECK (start_age IS NULL OR start_age BETWEEN 0 AND 120),
+        end_age INTEGER CHECK (end_age IS NULL OR end_age BETWEEN 0 AND 120),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE education_plans (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        account_id TEXT REFERENCES accounts(id),
+        goal_id TEXT REFERENCES goals(id),
+        target_amount INTEGER NOT NULL CHECK (target_amount > 0),
+        target_month TEXT NOT NULL CHECK (target_month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'),
+        monthly_contribution INTEGER NOT NULL CHECK (monthly_contribution >= 0),
+        return_rate REAL NOT NULL,
+        inflation_rate REAL NOT NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE recurring (
+        id TEXT PRIMARY KEY,
+        payee TEXT NOT NULL,
+        amount INTEGER NOT NULL CHECK (amount <> 0),
+        cadence TEXT NOT NULL
+          CHECK (cadence IN ('weekly', 'biweekly', 'monthly', 'quarterly', 'yearly')),
+        next_date TEXT NOT NULL CHECK (next_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'),
+        anchor_day INTEGER NOT NULL CHECK (anchor_day BETWEEN 1 AND 31),
+        category_id TEXT REFERENCES categories(id),
+        account_id TEXT REFERENCES accounts(id),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

@@ -1,7 +1,7 @@
 import type { ChangeLog } from './changes.ts'
-import type { CrudDeps } from './crud.ts'
+import { assertDate, type CrudDeps } from './crud.ts'
 import type { SqlRunner } from './storage.ts'
-import { assertDate } from './transactions.ts'
+import { dropUnitData } from './unit-ledger.ts'
 
 export const TAX_TYPES = ['roth', 'traditional', 'taxable', '529'] as const
 export type TaxType = (typeof TAX_TYPES)[number]
@@ -210,6 +210,7 @@ export async function createInvestmentSettings(
 
 /** Removes an account's settings and valuations along with the account. */
 export async function dropInvestmentData(db: SqlRunner, changes: ChangeLog, accountId: string) {
+  await dropUnitData(db, changes, accountId)
   const valuations = await db.query<{ id: string }>(
     'SELECT id FROM account_valuations WHERE account_id = ?',
     [accountId],

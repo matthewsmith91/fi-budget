@@ -255,21 +255,21 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 
 - [x] Investment account settings: tax type, owner, mode
 - [x] Valuations from sync or manual entry
-- [ ] Unit ledger: buys on cleared contribution transfers, sells on withdrawals, dividends to Unassigned
-- [ ] Per-goal value, cost basis, gain/loss and realized gains
-- [ ] Holding-level mode for accounts with different investments per goal
-- [ ] Roth contribution tracking per person against the annual limit
+- [x] Unit ledger: buys on cleared contribution transfers, sells on withdrawals, dividends to Unassigned
+- [x] Per-goal value, cost basis, gain/loss and realized gains
+- [x] Holding-level mode for accounts with different investments per goal
+- [x] Roth contribution tracking per person against the annual limit
 
 ### Phase 5 — Planning dashboard
 
-- [ ] Net worth over time
-- [ ] Retirement projection: contributions, returns, target age
-- [ ] Retirement status and multiplier on each category
-- [ ] Fixed retirement additions with start and end ages
-- [ ] Retirement spend estimate and success check (withdrawal rate vs projected portfolio)
-- [ ] 529 projection per child
-- [ ] Recurring bills calendar and 30–60 day cash-flow forecast
-- [ ] Monthly review screen
+- [x] Net worth over time
+- [x] Retirement projection: contributions, returns, target age
+- [x] Retirement status and multiplier on each category
+- [x] Fixed retirement additions with start and end ages
+- [x] Retirement spend estimate and success check (withdrawal rate vs projected portfolio)
+- [x] 529 projection per child
+- [x] Recurring bills calendar and 30–60 day cash-flow forecast
+- [x] Monthly review screen
 - [ ] Retire Empower once numbers match for two months
 
 ### Phase 6 — Polish

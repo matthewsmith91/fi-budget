@@ -1,4 +1,4 @@
-import { type Category, type CategoryBalance, type CategoryGroup, type Goal } from '@budget-fi/core'
+import { type Category, type CategoryBalance, type Goal } from '@budget-fi/core'
 import { Fragment, useState, type FormEvent } from 'react'
 import { AssignedInput } from './AssignedInput.tsx'
 import { budget } from './client.ts'
@@ -7,27 +7,35 @@ import { messageOf } from './errors.ts'
 import { holdingWarning } from './goal-text.ts'
 import { money, monthLabel, monthOf, shiftMonth, todayIso } from './format.ts'
 import { GoalForm, GoalRows } from './GoalRows.tsx'
-import { Menu } from './Menu.tsx'
+import { CategorySheet, GroupSheet } from './ManageSheet.tsx'
+import { retirementTag } from './retirement-text.ts'
+import { RetirementStatusDialog } from './RetirementStatusDialog.tsx'
+import { hrefFor } from './route.ts'
 
 type Run = (fn: () => Promise<unknown>) => Promise<void>
 
-function moved<T>(items: T[], from: number, by: -1 | 1): T[] {
-  const next = [...items]
-  const [item] = next.splice(from, 1)
-  next.splice(from + by, 0, item!)
-  return next
-}
-
 const ZERO: CategoryBalance = { categoryId: '', assigned: 0, activity: 0, available: 0 }
+const NONE = '—'
 
 export function BudgetView({ today }: { today: Date }) {
   const refresh = useRefresh()
   const [month, setMonth] = useState(() => monthOf(todayIso(today)))
   const groups = useBudgetQuery(() => budget.listCategoryGroups())
-  const balances = useBudgetQuery(() => budget.getMonthBalances(month), [month])
-  const readyToAssign = useBudgetQuery(() => budget.getReadyToAssign(month), [month])
+  // Tagged with their month: a query keeps its last answer while the next one loads, and the
+  // previous month's figures must not pass for this month's.
+  const balances = useBudgetQuery(
+    () => budget.getMonthBalances(month).then((rows) => ({ month, rows })),
+    [month],
+  )
+  const readyToAssign = useBudgetQuery(
+    () => budget.getReadyToAssign(month).then((amount) => ({ month, amount })),
+    [month],
+  )
   const goals = useBudgetQuery(() => budget.listGoals())
-  const goalBalances = useBudgetQuery(() => budget.getGoalBalances(month), [month])
+  const goalBalances = useBudgetQuery(
+    () => budget.getGoalBalances(month).then((rows) => ({ month, rows })),
+    [month],
+  )
   const accounts = useBudgetQuery(() => budget.listAccounts())
   const holdings = useBudgetQuery(() => budget.getAccountHoldings(month), [month])
   const [showHidden, setShowHidden] = useState(false)
@@ -37,7 +45,10 @@ export function BudgetView({ today }: { today: Date }) {
   const [showArchived, setShowArchived] = useState(false)
   const [addingGoalTo, setAddingGoalTo] = useState<string | null>(null)
   const [editingGoal, setEditingGoal] = useState<string | null>(null)
+  const [retiring, setRetiring] = useState<Category | null>(null)
+  const [managing, setManaging] = useState<{ kind: 'category' | 'group'; id: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const thisMonth = monthOf(todayIso(today))
 
   const run: Run = async (fn) => {
     setError(null)
@@ -47,6 +58,22 @@ export function BudgetView({ today }: { today: Date }) {
     } catch (err) {
       setError(messageOf(err))
     }
+  }
+  /** Like `run` but lets the failure reach the form that asked, so it can stay open. */
+  const write = async (fn: () => Promise<unknown>) => {
+    setError(null)
+    await fn()
+    refresh()
+  }
+
+  // Figures belong to this month only once they have arrived for it.
+  const figuresReady = balances.data?.month === month
+  const goalsReady = goalBalances.data?.month === month
+  const failed = [groups, balances, readyToAssign, goalBalances, goals, accounts].find(
+    (q) => q.error,
+  )
+  const retryAll = () => {
+    for (const q of [groups, balances, readyToAssign, goalBalances, goals, accounts]) q.reload()
   }
 
   const all = groups.data ?? []
@@ -61,7 +88,8 @@ export function BudgetView({ today }: { today: Date }) {
   const archivedCount = allGoals.filter((g) => g.archived).length
   const goalsOf = (categoryId: string): Goal[] =>
     allGoals.filter((g) => g.categoryId === categoryId && (showArchived || !g.archived))
-  const balanceOf = (id: string) => balances.data?.find((b) => b.categoryId === id) ?? ZERO
+  const balanceOf = (id: string) =>
+    (figuresReady && balances.data?.rows.find((b) => b.categoryId === id)) || ZERO
   const sum = (cats: Category[]) =>
     cats.reduce(
       (t, c) => {
@@ -97,38 +125,63 @@ export function BudgetView({ today }: { today: Date }) {
     )
   }
 
+  const managedCategory =
+    managing?.kind === 'category'
+      ? all.flatMap((g) => g.categories.map((c) => ({ c, g }))).find((x) => x.c.id === managing.id)
+      : undefined
+  const managedGroup =
+    managing?.kind === 'group' ? all.find((g) => g.id === managing.id) : undefined
+
   return (
     <div className="page">
-      <header className="page-header budget-header">
-        <div className="month-nav">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Previous month"
-            onClick={() => setMonth(shiftMonth(month, -1))}
-          >
-            ‹
-          </button>
-          <h1>
-            {label.name} <span className="muted">{label.year}</span>
-          </h1>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Next month"
-            onClick={() => setMonth(shiftMonth(month, 1))}
-          >
-            ›
-          </button>
-        </div>
-        <ReadyToAssign amount={readyToAssign.data} />
-      </header>
+      <div className="budget-sticky">
+        <header className="page-header budget-header">
+          <div className="month-nav">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Previous month"
+              onClick={() => setMonth(shiftMonth(month, -1))}
+            >
+              ‹
+            </button>
+            <h1>
+              {label.name} <span className="muted">{label.year}</span>
+            </h1>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Next month"
+              onClick={() => setMonth(shiftMonth(month, 1))}
+            >
+              ›
+            </button>
+            {month !== thisMonth && (
+              <button type="button" className="secondary" onClick={() => setMonth(thisMonth)}>
+                This month
+              </button>
+            )}
+          </div>
+          <ReadyToAssign
+            amount={readyToAssign.data?.month === month ? readyToAssign.data.amount : undefined}
+          />
+        </header>
 
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
+        {failed?.error && (
+          <div className="banner warn load-error" role="alert">
+            <span>Couldn’t load the budget: {messageOf(failed.error)}</span>
+            <button type="button" className="secondary" onClick={retryAll}>
+              Try again
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
 
       {warnings.map((w) => (
         <div key={w.id} className="banner warn" role="status">
@@ -141,7 +194,7 @@ export function BudgetView({ today }: { today: Date }) {
           <NameForm
             label="Group name"
             submit="Add group"
-            onSubmit={(name) => run(() => budget.createCategoryGroup({ name }))}
+            onSubmit={(name) => write(() => budget.createCategoryGroup({ name }))}
             onDone={() => setAddingGroup(false)}
           />
         ) : (
@@ -151,7 +204,7 @@ export function BudgetView({ today }: { today: Date }) {
         )}
       </div>
 
-      <div className="table-wrap">
+      <div className="table-wrap" aria-busy={!figuresReady}>
         <table className="budget-table">
           <thead>
             <tr>
@@ -168,9 +221,9 @@ export function BudgetView({ today }: { today: Date }) {
             </tr>
             <tr className="totals-row">
               <td>All categories</td>
-              <td className="num">{money(totals.assigned)}</td>
-              <td className="num col-activity">{money(totals.activity)}</td>
-              <td className="num">{money(totals.available)}</td>
+              <td className="num">{figuresReady ? money(totals.assigned) : NONE}</td>
+              <td className="num col-activity">{figuresReady ? money(totals.activity) : NONE}</td>
+              <td className="num">{figuresReady ? money(totals.available) : NONE}</td>
             </tr>
           </thead>
           {shown.map((group) => {
@@ -190,71 +243,103 @@ export function BudgetView({ today }: { today: Date }) {
                       >
                         {isCollapsed ? '▸' : '▾'}
                       </button>
-                      <span className="group-name">{group.name}</span>
-                      <span className="row-actions">
-                        <button
-                          type="button"
-                          className="icon-button"
-                          aria-label={`Add category to ${group.name}`}
-                          onClick={() => {
-                            setAddingTo(group.id)
-                            if (isCollapsed) toggle(group.id)
-                          }}
-                        >
-                          +
-                        </button>
-                        <GroupMenu group={group} all={all} run={run} />
-                      </span>
+                      <button
+                        type="button"
+                        className="row-open group-name"
+                        aria-haspopup="dialog"
+                        onClick={() => setManaging({ kind: 'group', id: group.id })}
+                      >
+                        {group.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={`Add category to ${group.name}`}
+                        onClick={() => {
+                          setAddingTo(group.id)
+                          if (isCollapsed) toggle(group.id)
+                        }}
+                      >
+                        +
+                      </button>
                     </span>
                   </th>
-                  <td className="num">{money(t.assigned)}</td>
-                  <td className="num col-activity">{money(t.activity)}</td>
-                  <td className="num">{money(t.available)}</td>
+                  <td className="num">{figuresReady ? money(t.assigned) : NONE}</td>
+                  <td className="num col-activity">{figuresReady ? money(t.activity) : NONE}</td>
+                  <td className="num">{figuresReady ? money(t.available) : NONE}</td>
                 </tr>
                 {!isCollapsed &&
-                  group.categories.map((c, ci) => {
+                  group.categories.map((c) => {
                     const b = balanceOf(c.id)
+                    const tag = retirementTag(c.retirementStatus, c.retirementMultiplier)
                     return (
                       <Fragment key={c.id}>
                         <tr className={c.hidden ? 'category-row hidden-row' : 'category-row'}>
                           <th scope="row">
-                            <span className="name-cell">
+                            <button
+                              type="button"
+                              className="row-open"
+                              aria-haspopup="dialog"
+                              onClick={() => setManaging({ kind: 'category', id: c.id })}
+                            >
                               <span className="category-name">
                                 {c.name}
                                 <span className="tag need-want">
                                   {c.needOrWant === 'need' ? 'Need' : 'Want'}
                                 </span>
+                                {tag && (
+                                  <span
+                                    className="tag retirement"
+                                    title={
+                                      c.retirementStatus === 'ends'
+                                        ? 'Ends in retirement'
+                                        : 'Changes in retirement'
+                                    }
+                                  >
+                                    {tag}
+                                  </span>
+                                )}
                               </span>
-                              <span className="row-actions">
-                                <CategoryMenu
-                                  category={c}
-                                  group={group}
-                                  index={ci}
-                                  run={run}
-                                  onAddGoal={() => setAddingGoalTo(c.id)}
-                                />
-                              </span>
-                            </span>
+                            </button>
                           </th>
                           <td className="num">
-                            <AssignedInput
-                              label={`Assigned for ${c.name}`}
-                              value={b.assigned}
-                              onCommit={(delta) => assign(c, delta)}
-                              onInvalid={() => setError('Enter the amount as dollars, like 250.00')}
-                            />
+                            {figuresReady ? (
+                              <AssignedInput
+                                label={`Assigned for ${c.name}`}
+                                value={b.assigned}
+                                onCommit={(delta) => assign(c, delta)}
+                                onInvalid={() =>
+                                  setError('Enter the amount as dollars, like 250.00')
+                                }
+                              />
+                            ) : (
+                              NONE
+                            )}
                           </td>
-                          <td className="num col-activity">{money(b.activity)}</td>
+                          <td className="num col-activity">
+                            {figuresReady ? money(b.activity) : NONE}
+                          </td>
                           <td className="num">
-                            <span className={`pill ${tone(b.available)}`}>
-                              {money(b.available)}
-                            </span>
+                            {!figuresReady ? (
+                              NONE
+                            ) : b.available < 0 && c.creditCardAccountId === null ? (
+                              // the monthly review is where overspending gets covered
+                              <a className="pill bad" href={hrefFor.reviewFor(month)}>
+                                {money(b.available)}
+                                <span className="sr-only"> overspent, open the monthly review</span>
+                              </a>
+                            ) : (
+                              <span className={`pill ${tone(b.available)}`}>
+                                {money(b.available)}
+                              </span>
+                            )}
                           </td>
                         </tr>
                         <GoalRows
                           goals={goalsOf(c.id)}
                           accounts={accountList}
-                          balances={goalBalances.data ?? []}
+                          balances={goalBalances.data?.rows ?? []}
+                          ready={goalsReady}
                           month={month}
                           editing={editingGoal}
                           onEdit={setEditingGoal}
@@ -268,7 +353,7 @@ export function BudgetView({ today }: { today: Date }) {
                                 label={`New goal in ${c.name}`}
                                 accounts={accountList}
                                 onSubmit={(input) =>
-                                  run(() => budget.createGoal({ categoryId: c.id, ...input }))
+                                  write(() => budget.createGoal({ categoryId: c.id, ...input }))
                                 }
                                 onDone={() => setAddingGoalTo(null)}
                               />
@@ -285,7 +370,7 @@ export function BudgetView({ today }: { today: Date }) {
                         label={`New category in ${group.name}`}
                         submit="Add"
                         onSubmit={(name) =>
-                          run(() => budget.createCategory({ groupId: group.id, name }))
+                          write(() => budget.createCategory({ groupId: group.id, name }))
                         }
                         onDone={() => setAddingTo(null)}
                       />
@@ -296,7 +381,7 @@ export function BudgetView({ today }: { today: Date }) {
             )
           })}
         </table>
-        {!groups.loading && shown.length === 0 && (
+        {!groups.loading && !groups.error && shown.length === 0 && (
           <p className="empty">
             Your budget has no categories yet. Add a category group, then the categories you spend
             on.
@@ -321,6 +406,41 @@ export function BudgetView({ today }: { today: Date }) {
           </button>
         </p>
       )}
+
+      {managedCategory && (
+        <CategorySheet
+          category={managedCategory.c}
+          inGroup={managedCategory.g.categories}
+          shown={shown.find((g) => g.id === managedCategory.g.id)?.categories ?? []}
+          figures={figuresReady ? balanceOf(managedCategory.c.id) : null}
+          month={month}
+          monthName={`${label.name} ${label.year}`}
+          onAddGoal={() => {
+            setManaging(null)
+            setAddingGoalTo(managedCategory.c.id)
+          }}
+          onRetirement={() => {
+            setManaging(null)
+            setRetiring(managedCategory.c)
+          }}
+          onClose={() => setManaging(null)}
+        />
+      )}
+
+      {managedGroup && (
+        <GroupSheet group={managedGroup} all={all} onClose={() => setManaging(null)} />
+      )}
+
+      {retiring && (
+        <RetirementStatusDialog
+          category={retiring}
+          onClose={() => setRetiring(null)}
+          onSave={async (retirementStatus, retirementMultiplier) => {
+            await budget.updateCategory(retiring.id, { retirementStatus, retirementMultiplier })
+            refresh()
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -328,7 +448,14 @@ export function BudgetView({ today }: { today: Date }) {
 const tone = (available: number) => (available < 0 ? 'bad' : available === 0 ? 'zero' : 'good')
 
 function ReadyToAssign({ amount }: { amount: number | undefined }) {
-  if (amount === undefined) return <div className="rta zero" aria-hidden />
+  if (amount === undefined) {
+    return (
+      <div className="rta zero" role="status">
+        <span className="rta-amount">{NONE}</span>
+        <span className="rta-title">Loading</span>
+      </div>
+    )
+  }
   const [kind, title] =
     amount > 0
       ? ['good', 'Ready to Assign']
@@ -343,6 +470,7 @@ function ReadyToAssign({ amount }: { amount: number | undefined }) {
   )
 }
 
+/** A name box that stays open, with what you typed and the reason, when saving fails. */
 function NameForm(props: {
   label: string
   submit: string
@@ -350,9 +478,15 @@ function NameForm(props: {
   onDone: () => void
 }) {
   const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
   async function submit(e: FormEvent) {
     e.preventDefault()
-    await props.onSubmit(name)
+    setError(null)
+    try {
+      await props.onSubmit(name)
+    } catch (err) {
+      return setError(messageOf(err))
+    }
     setName('')
     props.onDone()
   }
@@ -365,6 +499,7 @@ function NameForm(props: {
       <input
         autoFocus
         aria-label={props.label}
+        aria-invalid={error !== null}
         placeholder={props.label}
         value={name}
         onChange={(e) => setName(e.target.value)}
@@ -374,124 +509,11 @@ function NameForm(props: {
       <button type="button" className="secondary" onClick={props.onDone}>
         Cancel
       </button>
+      {error && (
+        <span className="error" role="alert">
+          {error}
+        </span>
+      )}
     </form>
-  )
-}
-
-function GroupMenu(props: { group: CategoryGroup; all: CategoryGroup[]; run: Run }) {
-  const { group, all, run } = props
-  const reorder = (by: -1 | 1) =>
-    run(() =>
-      budget.reorderCategoryGroups(
-        moved(
-          all,
-          all.findIndex((g) => g.id === group.id),
-          by,
-        ).map((g) => g.id),
-      ),
-    )
-  const position = all.findIndex((g) => g.id === group.id)
-  return (
-    <Menu
-      label={`Options for ${group.name}`}
-      items={[
-        {
-          label: 'Rename',
-          onSelect: () => {
-            const name = prompt('Rename group', group.name)
-            if (name !== null) void run(() => budget.updateCategoryGroup(group.id, { name }))
-          },
-        },
-        {
-          label: group.hidden ? 'Show' : 'Hide',
-          onSelect: () =>
-            void run(() => budget.updateCategoryGroup(group.id, { hidden: !group.hidden })),
-        },
-        { label: 'Move up', disabled: position <= 0, onSelect: () => void reorder(-1) },
-        {
-          label: 'Move down',
-          disabled: position >= all.length - 1,
-          onSelect: () => void reorder(1),
-        },
-        {
-          label: 'Delete',
-          onSelect: () => {
-            if (confirm(`Delete group ${group.name}?`))
-              void run(() => budget.deleteCategoryGroup(group.id))
-          },
-        },
-      ]}
-    />
-  )
-}
-
-function CategoryMenu(props: {
-  category: Category
-  group: CategoryGroup
-  index: number
-  run: Run
-  onAddGoal: () => void
-}) {
-  const { category: c, group, index, run } = props
-  // A card's payment category follows the card, so it can be hidden but not renamed or deleted.
-  const managed = c.creditCardAccountId !== null
-  // the group here is the filtered view; reorder against the real order
-  const reorder = (by: -1 | 1) =>
-    run(async () => {
-      const real = (await budget.listCategoryGroups()).find((g) => g.id === group.id)
-      if (!real) return
-      const from = real.categories.findIndex((x) => x.id === c.id)
-      await budget.reorderCategories(
-        group.id,
-        moved(real.categories, from, by).map((x) => x.id),
-      )
-    })
-  return (
-    <Menu
-      label={`Options for ${c.name}`}
-      items={[
-        ...(managed
-          ? []
-          : [
-              {
-                label: 'Rename',
-                onSelect: () => {
-                  const name = prompt('Rename category', c.name)
-                  if (name !== null) void run(() => budget.updateCategory(c.id, { name }))
-                },
-              },
-            ]),
-        ...(managed ? [] : [{ label: 'Add goal', onSelect: props.onAddGoal }]),
-        {
-          label: c.needOrWant === 'need' ? 'Mark as want' : 'Mark as need',
-          onSelect: () =>
-            void run(() =>
-              budget.updateCategory(c.id, {
-                needOrWant: c.needOrWant === 'need' ? 'want' : 'need',
-              }),
-            ),
-        },
-        {
-          label: c.hidden ? 'Show' : 'Hide',
-          onSelect: () => void run(() => budget.updateCategory(c.id, { hidden: !c.hidden })),
-        },
-        { label: 'Move up', disabled: index === 0, onSelect: () => void reorder(-1) },
-        {
-          label: 'Move down',
-          disabled: index === group.categories.length - 1,
-          onSelect: () => void reorder(1),
-        },
-        ...(managed
-          ? []
-          : [
-              {
-                label: 'Delete',
-                onSelect: () => {
-                  if (confirm(`Delete ${c.name}?`)) void run(() => budget.deleteCategory(c.id))
-                },
-              },
-            ]),
-      ]}
-    />
   )
 }

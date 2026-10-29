@@ -1,10 +1,12 @@
 import { cleanName, flag, type CrudDeps } from './crud.ts'
 import { dropPaymentCategory, ensurePaymentCategory, hidePaymentCategory } from './categories.ts'
+import { clearEducationLinks } from './education.ts'
 import {
   createInvestmentSettings,
   dropInvestmentData,
   type InvestmentSettings,
 } from './investments.ts'
+import { clearRecurringLinks } from './recurring.ts'
 import type { SqlRunner } from './storage.ts'
 
 export const ACCOUNT_TYPES = ['checking', 'credit', 'savings', 'investment'] as const
@@ -148,6 +150,8 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
           [id],
         )
         for (const rule of rules) await log(tx).delete('income_rules', rule.id)
+        await clearRecurringLinks(tx, log(tx), { accountId: id })
+        await clearEducationLinks(tx, log(tx), { accountId: id })
         await dropPaymentCategory(tx, log(tx), id)
         await dropInvestmentData(tx, log(tx), id)
         await log(tx).delete('accounts', id)

@@ -1,9 +1,11 @@
 import { accountsApi, type AccountsApi } from './accounts.ts'
 import { activityApi, type ActivityApi } from './activity.ts'
 import { allocationsApi, type AllocationsApi } from './allocations.ts'
+import { educationApi, type EducationApi } from './education.ts'
 import { emergencyFundApi, type EmergencyFundApi } from './emergency-fund.ts'
 import { exportJson, importJson, importSqlite } from './budget-file.ts'
 import { changeLog } from './changes.ts'
+import { contributionsApi, type ContributionsApi } from './contributions.ts'
 import { categoriesApi, type CategoriesApi } from './categories.ts'
 import { newDeviceId } from './hlc.ts'
 import { goalsApi, type GoalsApi } from './goals.ts'
@@ -11,9 +13,14 @@ import { importsApi, type ImportsApi } from './imports.ts'
 import { incomeRulesApi, type IncomeRulesApi } from './income-rules.ts'
 import { investmentsApi, type InvestmentsApi } from './investments.ts'
 import { currentVersion } from './migrations.ts'
+import { monthlyReviewApi, type MonthlyReviewApi } from './monthly-review.ts'
+import { netWorthApi, type NetWorthApi } from './net-worth.ts'
 import { payeeRulesApi, type PayeeRulesApi } from './payee-rules.ts'
 import { reconcileApi, type ReconcileApi } from './reconcile.ts'
+import { recurringApi, type RecurringApi } from './recurring.ts'
 import { reportsApi, type ReportsApi } from './reports.ts'
+import { retirementApi, type RetirementApi } from './retirement.ts'
+import { retirementSpendingApi, type RetirementSpendingApi } from './retirement-spending.ts'
 import type { SqlRunner, StorageAdapter } from './storage.ts'
 import {
   createSyncEngine,
@@ -24,6 +31,7 @@ import {
   type SyncTransport,
 } from './sync.ts'
 import { transactionsApi, type TransactionsApi } from './transactions.ts'
+import { unitLedgerApi, type UnitLedgerApi } from './unit-ledger.ts'
 import { ynabApi, type YnabApi } from './ynab.ts'
 
 export interface Household {
@@ -56,9 +64,17 @@ export interface BudgetApi
     ActivityApi,
     ImportsApi,
     InvestmentsApi,
+    UnitLedgerApi,
+    ContributionsApi,
     PayeeRulesApi,
     IncomeRulesApi,
     ReportsApi,
+    NetWorthApi,
+    RetirementApi,
+    RetirementSpendingApi,
+    EducationApi,
+    RecurringApi,
+    MonthlyReviewApi,
     EmergencyFundApi,
     YnabApi {
   getStatus(): Promise<AppStatus>
@@ -129,9 +145,17 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...reconcileApi(crud),
     ...importsApi(crud),
     ...investmentsApi(crud),
+    ...unitLedgerApi(crud),
+    ...contributionsApi(crud),
     ...payeeRulesApi(crud),
     ...incomeRulesApi(crud),
     ...reportsApi(crud),
+    ...netWorthApi(crud),
+    ...retirementApi(crud),
+    ...retirementSpendingApi(crud),
+    ...educationApi(crud),
+    ...recurringApi(crud),
+    ...monthlyReviewApi(crud),
     ...emergencyFundApi(crud),
     ...ynabApi(crud),
     ...activityApi({ ...crud, deviceId, mode: sync ? 'sync' : 'local' }),

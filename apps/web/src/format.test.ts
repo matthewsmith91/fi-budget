@@ -1,11 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { money, monthLabel, parseDate, shiftMonth, shortDate, todayIso } from './format.ts'
+import {
+  money,
+  moneyShort,
+  monthLabel,
+  parseDate,
+  shiftMonth,
+  shortDate,
+  todayIso,
+} from './format.ts'
 
 describe('format', () => {
   it('formats money', () => {
     expect(money(123456)).toBe('$1,234.56')
     expect(money(-1200)).toBe('-$12.00')
     expect(money(0)).toBe('$0.00')
+  })
+
+  it('shortens money for chart axes', () => {
+    expect(moneyShort(0)).toBe('$0')
+    expect(moneyShort(90_000)).toBe('$900')
+    expect(moneyShort(150_000)).toBe('$1.5K')
+    expect(moneyShort(25_000_000)).toBe('$250K')
+    expect(moneyShort(120_000_000)).toBe('$1.2M')
+    expect(moneyShort(100_000_000)).toBe('$1M')
+    expect(moneyShort(-250_000)).toBe('-$2.5K')
   })
 
   it('moves between months across year boundaries', () => {

@@ -1,6 +1,7 @@
 import type { CrudDeps } from './crud.ts'
 import { flag } from './crud.ts'
 import { settleIncome } from './income-rules.ts'
+import { settleUnits } from './unit-ledger.ts'
 import { loadUsableRules, matchPayeeRule } from './payee-rules.ts'
 import { assertDate, loadTransactions, type Transaction } from './transactions.ts'
 import type { SqlRunner } from './storage.ts'
@@ -341,6 +342,8 @@ export function importsApi({ adapter, now, changes: log }: CrudDeps): ImportsApi
         }
         // Income waits for approval before the income rules act on it.
         await settleIncome(tx, changes, now(), ids)
+        // A dividend counts once someone has approved it.
+        await settleUnits(tx, changes, now(), ids)
       })
     },
 

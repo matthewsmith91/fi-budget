@@ -18,12 +18,14 @@ export function TransferDialog({ onClose, accounts, defaultFromId }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   const refresh = useRefresh()
   const groups = useBudgetQuery(() => budget.listCategoryGroups())
+  const goals = useBudgetQuery(() => budget.listGoals())
   const firstFrom = accounts.find((a) => a.id === defaultFromId) ?? accounts[0]
   const [fromId, setFromId] = useState(firstFrom?.id ?? '')
   const [toId, setToId] = useState(accounts.find((a) => a.id !== firstFrom?.id)?.id ?? '')
   const [date, setDate] = useState(() => shortDate(todayIso()))
   const [amount, setAmount] = useState('')
   const [categoryId, setCategoryId] = useState('')
+  const [goalId, setGoalId] = useState('')
   const [cleared, setCleared] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -33,6 +35,7 @@ export function TransferDialog({ onClose, accounts, defaultFromId }: Props) {
   const to = accounts.find((a) => a.id === toId)
   // Money crossing the edge of the budget is spending or income, so it takes a category.
   const crossesBudget = !!from && !!to && from.onBudget !== to.onBudget
+  const categoryGoals = (goals.data ?? []).filter((g) => g.categoryId === categoryId && !g.archived)
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -48,6 +51,7 @@ export function TransferDialog({ onClose, accounts, defaultFromId }: Props) {
         date: on,
         amount: cents,
         categoryId: crossesBudget && categoryId ? categoryId : undefined,
+        goalId: crossesBudget && categoryId && goalId ? goalId : undefined,
         cleared,
       })
       refresh()
@@ -96,7 +100,14 @@ export function TransferDialog({ onClose, accounts, defaultFromId }: Props) {
         {crossesBudget && (
           <label>
             Category
-            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <select
+              value={categoryId}
+              onChange={(e) => {
+                setCategoryId(e.target.value)
+                // a goal belongs to one category
+                setGoalId('')
+              }}
+            >
               <option value="">Uncategorized</option>
               {(groups.data ?? [])
                 .filter((g) => !g.hidden)
@@ -117,6 +128,29 @@ export function TransferDialog({ onClose, accounts, defaultFromId }: Props) {
                 ? 'This money leaves the budget, so it counts as spending.'
                 : 'This money joins the budget, so it counts as income unless you pick a category.'}
             </small>
+          </label>
+        )}
+        {crossesBudget && categoryId && categoryGoals.length > 0 && (
+          <label>
+            Goal
+            <select value={goalId} onChange={(e) => setGoalId(e.target.value)}>
+              <option value="">None</option>
+              {categoryGoals.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+            {to && !to.onBudget && to.type === 'investment' && (
+              <small className="muted">
+                Once cleared, this buys units of {to.name} for the goal.
+              </small>
+            )}
+            {from && !from.onBudget && from.type === 'investment' && (
+              <small className="muted">
+                Once cleared, this sells the goal’s units of {from.name}.
+              </small>
+            )}
           </label>
         )}
         <label className="check">

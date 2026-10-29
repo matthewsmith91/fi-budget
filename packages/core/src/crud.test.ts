@@ -134,6 +134,8 @@ describe('category groups and categories', () => {
       name: 'X2',
       needOrWant: 'need',
       hidden: true,
+      retirementStatus: 'continues',
+      retirementMultiplier: null,
       creditCardAccountId: null,
     })
     await api.updateCategory(x.id, { groupId: b.id })

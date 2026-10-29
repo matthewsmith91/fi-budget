@@ -822,3 +822,101 @@ describe('income rules on two devices', () => {
     expect(given.map((x) => x.amount)).toEqual([5_000])
   })
 })
+
+describe('the unit ledger on two devices', () => {
+  it('lands one row when both devices clear the same contribution offline', async () => {
+    const brokerage = (await a.api.createAccount({ name: 'Brokerage', type: 'investment' })).id
+    const [, into] = await a.api.createTransfer({
+      fromAccountId: checking,
+      toAccountId: brokerage,
+      date: '2026-10-05',
+      amount: 50_000,
+    })
+    await converge()
+    await a.api.updateTransaction(into.id, { cleared: true })
+    await b.api.updateTransaction(into.id, { cleared: true })
+    await converge()
+    expect(await a.api.listUnitEvents(brokerage)).toMatchObject([{ type: 'buy', units: 500 }])
+    // unclearing on one device voids the row for both
+    await b.api.updateTransaction(into.id, { cleared: false })
+    await converge()
+    expect(await a.api.listUnitEvents(brokerage)).toEqual([])
+  })
+})
+
+describe('planning on two devices', () => {
+  it('shares fixed retirement items, education plans and recurring items', async () => {
+    const item = await a.api.createRetirementFixedItem({
+      name: 'Health insurance',
+      annualAmount: 1_200_000,
+      endAge: 65,
+    })
+    const invest = await a.api.createAccount({ name: '529', type: 'investment' })
+    const plan = await a.api.createEducationPlan({
+      name: 'Emma',
+      accountId: invest.id,
+      targetAmount: 8_000_000,
+      targetMonth: '2036-08',
+    })
+    const bill = await a.api.createRecurring({
+      payee: 'Landlord',
+      amount: -150_000,
+      cadence: 'monthly',
+      nextDate: '2026-11-01',
+      accountId: checking,
+    })
+    await converge()
+    expect(await b.api.listRetirementFixedItems()).toEqual([item])
+    expect(await b.api.listEducationPlans()).toEqual([plan])
+    expect(await b.api.listRecurring()).toEqual([bill])
+
+    // a edits the plan while b advances the bill and ends the insurance sooner
+    await a.api.updateEducationPlan(plan.id, { monthlyContribution: 30_000 })
+    await b.api.advanceRecurring(bill.id)
+    await b.api.updateRetirementFixedItem(item.id, { endAge: 62 })
+    await converge()
+    expect((await a.api.listEducationPlans())[0]!.monthlyContribution).toBe(30_000)
+    expect((await a.api.listRecurring())[0]!.nextDate).toBe('2026-12-01')
+    expect((await a.api.listRetirementFixedItems())[0]!.endAge).toBe(62)
+  })
+
+  it('keeps the withdrawal rate and lookback with the shared assumptions', async () => {
+    const settings = { ...(await a.api.getRetirementSettings()), birthMonth: '1991-02' }
+    await a.api.setRetirementSettings({ ...settings, withdrawalRate: 3.5, lookbackMonths: 24 })
+    await converge()
+    expect(await b.api.getRetirementSettings()).toMatchObject({
+      withdrawalRate: 3.5,
+      lookbackMonths: 24,
+    })
+  })
+})
+
+describe('retirement planning on two devices', () => {
+  const settings = {
+    birthMonth: '1991-02',
+    targetAge: 65,
+    monthlyContribution: 100_000,
+    returnRate: 7,
+    inflationRate: 3,
+    withdrawalRate: 4,
+    lookbackMonths: 12,
+  }
+
+  it('lands one assumptions row when both devices save first, newest value per field', async () => {
+    await a.api.setRetirementSettings(settings)
+    await b.api.setRetirementSettings({ ...settings, targetAge: 60 })
+    await converge()
+    const rows = await a.adapter.query('SELECT id FROM retirement_assumptions')
+    expect(rows).toHaveLength(1)
+    expect(await a.api.getRetirementSettings()).toEqual(await b.api.getRetirementSettings())
+  })
+
+  it('shares a category’s retirement status and multiplier', async () => {
+    await a.api.updateCategory(fun, { retirementStatus: 'changes', retirementMultiplier: 1.5 })
+    await converge()
+    const shared = (await b.api.listCategoryGroups())
+      .flatMap((g) => g.categories)
+      .find((c) => c.id === fun)
+    expect(shared).toMatchObject({ retirementStatus: 'changes', retirementMultiplier: 1.5 })
+  })
+})

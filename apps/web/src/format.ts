@@ -3,6 +3,19 @@ import { cents, formatCents } from '@budget-fi/core'
 /** `$1,234.56`; negatives as `-$12.00`. */
 export const money = (amount: number) => formatCents(cents(amount))
 
+/** `$1.2M`, `$250K`, `$900`; for chart axes and other tight spots. Takes cents. */
+export function moneyShort(amount: number): string {
+  const dollars = Math.abs(amount) / 100
+  const compact = (n: number, unit: string) => `${Number(n.toFixed(1))}${unit}`
+  const text =
+    dollars >= 1_000_000
+      ? compact(dollars / 1_000_000, 'M')
+      : dollars >= 1_000
+        ? compact(dollars / 1_000, 'K')
+        : String(Math.round(dollars))
+  return `${amount < 0 ? '-' : ''}$${text}`
+}
+
 const pad = (n: number) => String(n).padStart(2, '0')
 
 /** Today in the device's time zone as `YYYY-MM-DD`. */

@@ -1,8 +1,13 @@
 import { useState } from 'react'
 import { budget } from './client.ts'
 import { useBudgetQuery } from './data.ts'
+import { EducationCard } from './EducationCard.tsx'
 import { EmergencyFundCard } from './EmergencyFundCard.tsx'
 import { money, monthLabel, monthOf, shiftMonth, todayIso } from './format.ts'
+import { NetWorthCard } from './NetWorthCard.tsx'
+import { RetirementCard } from './RetirementCard.tsx'
+import { RetirementSpendCard } from './RetirementSpendCard.tsx'
+import { RothContributionsCard } from './RothContributionsCard.tsx'
 
 /** Whole percent of `part` in `whole`, or null when there is nothing to divide. */
 const share = (part: number, whole: number) => (whole > 0 ? Math.round((part * 100) / whole) : null)
@@ -22,7 +27,7 @@ export function ReportsView({ today }: { today: Date }) {
   return (
     <div className="page">
       <header className="page-header">
-        <h1>Needs vs wants</h1>
+        <h1>Reports</h1>
         <div className="month-nav">
           <button
             type="button"
@@ -33,7 +38,7 @@ export function ReportsView({ today }: { today: Date }) {
             ‹
           </button>
           <span className="report-month">
-            through {label.name} <span className="muted">{label.year}</span>
+            Needs and wants through {label.name} <span className="muted">{label.year}</span>
           </span>
           <button
             type="button"
@@ -51,6 +56,14 @@ export function ReportsView({ today }: { today: Date }) {
           {report.error.message}
         </p>
       )}
+
+      <NetWorthCard today={today} />
+
+      <RetirementCard today={today} />
+
+      <RetirementSpendCard month={month} today={today} />
+
+      <EducationCard today={today} />
 
       <section className="card" aria-label="Average month">
         <h2>Average month</h2>
@@ -102,6 +115,8 @@ export function ReportsView({ today }: { today: Date }) {
       </section>
 
       <EmergencyFundCard month={month} today={today} />
+
+      <RothContributionsCard today={today} />
 
       <section className="card" aria-label="By month">
         <h2>By month</h2>

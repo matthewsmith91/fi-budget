@@ -2,6 +2,7 @@ import { backupReminderDue } from '@budget-fi/core'
 import { useState } from 'react'
 import { ActivityView } from './ActivityView.tsx'
 import { AddAccountDialog } from './AddAccountDialog.tsx'
+import { BillsView } from './BillsView.tsx'
 import { BudgetView } from './BudgetView.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
@@ -10,6 +11,7 @@ import { getBackupState } from './device-settings.ts'
 import { InboxView } from './InboxView.tsx'
 import { QueueImporter } from './QueueImporter.tsx'
 import { ReportsView } from './ReportsView.tsx'
+import { ReviewView } from './ReviewView.tsx'
 import { usePersistentStorage, useServiceWorker } from './hooks.ts'
 import { RegisterView } from './RegisterView.tsx'
 import { useRoute } from './route.ts'
@@ -57,6 +59,10 @@ function Shell() {
     content = <ActivityView />
   } else if (route.view === 'reports') {
     content = <ReportsView today={now} />
+  } else if (route.view === 'bills') {
+    content = <BillsView today={now} />
+  } else if (route.view === 'review') {
+    content = <ReviewView today={now} month={route.month} />
   } else if (route.view === 'settings') {
     content = (
       <SettingsView

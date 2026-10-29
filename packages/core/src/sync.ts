@@ -22,6 +22,13 @@ export const SYNCED_TABLES: readonly string[] = [
   'income_rules',
   'investment_accounts',
   'account_valuations',
+  'holdings',
+  'unit_events',
+  'contribution_limits',
+  'retirement_assumptions',
+  'retirement_fixed_items',
+  'education_plans',
+  'recurring',
 ]
 
 export class SyncError extends Error {

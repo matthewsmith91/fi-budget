@@ -7,6 +7,8 @@ export type Route =
   | { view: 'inbox' }
   | { view: 'activity' }
   | { view: 'reports' }
+  | { view: 'bills' }
+  | { view: 'review'; month: string | null }
   | { view: 'settings'; section: SettingsSection }
 
 export const SETTINGS_SECTIONS = [
@@ -29,6 +31,9 @@ export function parseRoute(hash: string): Route {
   if (first === 'inbox') return { view: 'inbox' }
   if (first === 'activity') return { view: 'activity' }
   if (first === 'reports') return { view: 'reports' }
+  if (first === 'bills') return { view: 'bills' }
+  if (first === 'review')
+    return { view: 'review', month: /^\d{4}-\d{2}$/.test(id ?? '') ? id! : null }
   if (first === 'settings') {
     const section = SETTINGS_SECTIONS.find((s) => s.id === id)
     return { view: 'settings', section: section?.id ?? null }
@@ -43,6 +48,10 @@ export const hrefFor = {
   inbox: '#/inbox',
   activity: '#/activity',
   reports: '#/reports',
+  bills: '#/bills',
+  review: '#/review',
+  /** The review for one month, like when following an overspent category. */
+  reviewFor: (month: string) => `#/review/${month}`,
   settings: '#/settings',
   settingsSection: (section: Exclude<SettingsSection, null>) => `#/settings/${section}`,
 }

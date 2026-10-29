@@ -1,11 +1,14 @@
 import { assertGoalUsable } from './allocations.ts'
 import type { ChangeLog } from './changes.ts'
 import { assertNeedOrWant, type NeedOrWant } from './categories.ts'
-import type { CrudDeps } from './crud.ts'
-import { flag } from './crud.ts'
+import { assertDate, flag, type CrudDeps } from './crud.ts'
 import { settleIncome } from './income-rules.ts'
 import { cents } from './money.ts'
 import type { SqlRunner } from './storage.ts'
+import { settleUnits } from './unit-ledger.ts'
+
+// Other modules (and the UI) have always imported this from here.
+export { assertDate }
 
 export interface TransactionSplit {
   id: string
@@ -130,6 +133,11 @@ export interface NewTransfer {
    * leaves or joins the budget: the category of that leg. Without one, it is uncategorized.
    */
   categoryId?: string | null
+  /**
+   * A goal of `categoryId` the contribution is for. Into an investment account, the cleared
+   * transfer buys units for it; out of one, it sells them.
+   */
+  goalId?: string | null
   cleared?: boolean
 }
 
@@ -191,13 +199,6 @@ export async function dismissImport(
 ) {
   const [known] = await db.query('SELECT 1 AS x FROM dismissed_imports WHERE id = ?', [importId])
   if (!known) await changes.insert('dismissed_imports', { id: importId, created_at: at })
-}
-
-const DATE = /^\d{4}-\d\d-\d\d$/
-
-export function assertDate(date: string): void {
-  const valid = DATE.test(date) && new Date(`${date}T00:00:00Z`).toISOString().startsWith(date)
-  if (!valid) throw new Error(`"${date}" is not a date (expected YYYY-MM-DD)`)
 }
 
 function assertAmount(amount: number): void {
@@ -376,7 +377,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     if (patch.amount !== undefined && partner?.reconciled) {
       throw new Error('The other side of this transfer is reconciled and locked')
     }
-    if (patch.categoryId) {
+    if (patch.categoryId || patch.goalId) {
       const budgetToTracking =
         partner !== null &&
         (await onBudget(tx, current.accountId)) &&
@@ -384,8 +385,10 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
       if (!budgetToTracking) {
         throw new Error('Only the budget side of a transfer to a tracking account takes a category')
       }
-      await assertCategoryExists(tx, patch.categoryId)
-      await assertNotPaymentCategory(tx, patch.categoryId)
+      if (patch.categoryId) {
+        await assertCategoryExists(tx, patch.categoryId)
+        await assertNotPaymentCategory(tx, patch.categoryId)
+      }
     }
     const changes = log(tx)
     const amount = patch.amount ?? current.amount
@@ -396,10 +399,18 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     })
     const [only] = current.splits
     if (only) {
+      const categoryId = patch.categoryId === undefined ? only.categoryId : patch.categoryId || null
+      // Like on any line, the goal stays only while the category does, unless one is named.
+      const goalId =
+        patch.goalId !== undefined
+          ? patch.goalId || null
+          : categoryId === only.categoryId
+            ? only.goalId
+            : null
+      if (goalId) await assertGoalUsable(tx, goalId, categoryId, goalsOf(current))
       await changes.update('transaction_splits', only.id, {
-        category_id: patch.categoryId === undefined ? only.categoryId : patch.categoryId || null,
-        // A transfer leg never spends from a goal.
-        goal_id: null,
+        category_id: categoryId,
+        goal_id: categoryId ? goalId : null,
         amount,
       })
     }
@@ -408,6 +419,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
       const [theirs] = partner.splits
       if (theirs) await changes.update('transaction_splits', theirs.id, { amount: -amount })
     }
+    await settleUnits(tx, changes, now(), [current.id, partner?.id])
     return get(tx, current.id)
   }
 
@@ -478,11 +490,20 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           })
         }
         await settleIncome(tx, changes, at, [id, reversesId])
+        await settleUnits(tx, changes, at, [id])
         return get(tx, id)
       })
     },
 
-    async createTransfer({ fromAccountId, toAccountId, date, amount, categoryId, cleared }) {
+    async createTransfer({
+      fromAccountId,
+      toAccountId,
+      date,
+      amount,
+      categoryId,
+      goalId,
+      cleared,
+    }) {
       assertDate(date)
       assertAmount(amount)
       if (amount < 0) throw new Error('Transfer amount must be positive')
@@ -509,6 +530,10 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           await assertCategoryExists(tx, categoryId)
           await assertNotPaymentCategory(tx, categoryId)
         }
+        if (goalId) {
+          if (!categoryId) throw new Error('A goal needs its category too')
+          await assertGoalUsable(tx, goalId, categoryId)
+        }
         const pairId = newId()
         const at = now()
         const changes = log(tx)
@@ -534,10 +559,12 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
             id: newId(),
             transaction_id: id,
             category_id: leg.budget ? categoryId || null : null,
+            goal_id: leg.budget && categoryId ? goalId || null : null,
             amount: leg.amount,
             created_at: at,
           })
         }
+        await settleUnits(tx, changes, at, ids)
         return [await get(tx, ids[0]!), await get(tx, ids[1]!)]
       })
     },
@@ -598,6 +625,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
             await changes.delete('transaction_splits', extra.id)
           }
           await settleIncome(tx, changes, now(), [id, current.reversesId, reversesId])
+          await settleUnits(tx, changes, now(), [id])
           return get(tx, id)
         }
         const touchesSplit =
@@ -648,6 +676,8 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         if (touchesIncome) {
           await settleIncome(tx, changes, now(), [id, current.reversesId, reversesId])
         }
+        // Clearing, dating or re-amounting a dividend moves its units.
+        await settleUnits(tx, changes, now(), [id])
         return get(tx, id)
       })
     },
@@ -669,6 +699,8 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         // A deposit that is gone gives back what the rules assigned; a deleted reversal
         // gives its deposit's share back.
         await settleIncome(tx, changes, now(), [current.id, current.reversesId])
+        // Units a deleted contribution bought go with it.
+        await settleUnits(tx, changes, now(), [current.id, partner?.id])
       })
     },
 

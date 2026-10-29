@@ -9,6 +9,8 @@ import {
 import { useState, type FormEvent } from 'react'
 import { AssignedInput } from './AssignedInput.tsx'
 import { budget } from './client.ts'
+import { useRefresh } from './data.ts'
+import { messageOf } from './errors.ts'
 import { goalStatus } from './goal-text.ts'
 import { money } from './format.ts'
 import { Menu } from './Menu.tsx'
@@ -50,12 +52,17 @@ export function GoalForm(props: {
       return setError('Enter the target as dollars, like 1200.00')
     }
     setError(null)
-    await props.onSubmit({
-      name,
-      targetAmount,
-      targetDate: date || null,
-      heldInAccountId: heldIn || null,
-    })
+    try {
+      await props.onSubmit({
+        name,
+        targetAmount,
+        targetDate: date || null,
+        heldInAccountId: heldIn || null,
+      })
+    } catch (err) {
+      // stay open, with what was typed
+      return setError(messageOf(err))
+    }
     props.onDone()
   }
 
@@ -118,15 +125,18 @@ export function GoalRows(props: {
   goals: Goal[]
   accounts: Account[]
   balances: GoalBalance[]
+  /** False while `balances` is for another month or hasn't arrived. */
+  ready: boolean
   month: string
   editing: string | null
   onEdit: (id: string | null) => void
   run: Run
   onInvalid: () => void
 }) {
-  const { month, run } = props
+  const { month, run, ready } = props
+  const refresh = useRefresh()
   return props.goals.map((goal) => {
-    const b = props.balances.find((x) => x.goalId === goal.id)
+    const b = ready ? props.balances.find((x) => x.goalId === goal.id) : undefined
     if (props.editing === goal.id) {
       return (
         <tr key={goal.id} className="add-row">
@@ -135,7 +145,10 @@ export function GoalRows(props: {
               label={`Edit goal ${goal.name}`}
               goal={goal}
               accounts={props.accounts}
-              onSubmit={(input) => run(() => budget.updateGoal(goal.id, input))}
+              onSubmit={async (input) => {
+                await budget.updateGoal(goal.id, input)
+                refresh()
+              }}
               onDone={() => props.onEdit(null)}
             />
           </td>
@@ -201,27 +214,35 @@ export function GoalRows(props: {
           </span>
         </th>
         <td className="num">
-          <AssignedInput
-            label={`Assigned for goal ${goal.name}`}
-            value={b?.assigned ?? 0}
-            disabled={goal.archived}
-            onCommit={(delta) =>
-              void run(() =>
-                budget.allocate({
-                  month,
-                  categoryId: goal.categoryId,
-                  goalId: goal.id,
-                  amount: delta,
-                  note: 'Set in budget',
-                }),
-              )
-            }
-            onInvalid={props.onInvalid}
-          />
+          {ready ? (
+            <AssignedInput
+              label={`Assigned for goal ${goal.name}`}
+              value={b?.assigned ?? 0}
+              disabled={goal.archived}
+              onCommit={(delta) =>
+                void run(() =>
+                  budget.allocate({
+                    month,
+                    categoryId: goal.categoryId,
+                    goalId: goal.id,
+                    amount: delta,
+                    note: 'Set in budget',
+                  }),
+                )
+              }
+              onInvalid={props.onInvalid}
+            />
+          ) : (
+            '—'
+          )}
         </td>
-        <td className="num col-activity">{money(b?.activity ?? 0)}</td>
+        <td className="num col-activity">{ready ? money(b?.activity ?? 0) : '—'}</td>
         <td className="num">
-          <span className={`pill ${tone(b?.available ?? 0)}`}>{money(b?.available ?? 0)}</span>
+          {ready ? (
+            <span className={`pill ${tone(b?.available ?? 0)}`}>{money(b?.available ?? 0)}</span>
+          ) : (
+            '—'
+          )}
         </td>
       </tr>
     )

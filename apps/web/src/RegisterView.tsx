@@ -12,6 +12,7 @@ import {
 } from '@budget-fi/core'
 import { useState } from 'react'
 import { InvestmentDetails } from './InvestmentDetails.tsx'
+import { InvestmentGoals } from './InvestmentGoals.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
@@ -154,6 +155,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
             Reconcile
           </button>
         )}
+        {account?.type === 'investment' && <InvestmentGoals accountId={account.id} />}
         {account?.type === 'investment' && <InvestmentDetails accountId={account.id} />}
         {account && <AccountMenu account={account} run={run} />}
       </div>
@@ -233,6 +235,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                           date: input.date,
                           amount: input.splits[0]!.amount,
                           categoryId: input.splits[0]!.categoryId,
+                          goalId: input.splits[0]!.goalId,
                         }
                       : {
                           date: input.date,

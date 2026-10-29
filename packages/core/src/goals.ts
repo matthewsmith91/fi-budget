@@ -1,8 +1,10 @@
 import { assertMonth, type Month } from './allocations.ts'
 import { cleanName, type CrudDeps } from './crud.ts'
+import { clearEducationLinks } from './education.ts'
 import { cents } from './money.ts'
 import type { SqlRunner } from './storage.ts'
 import { assertDate } from './transactions.ts'
+import { goalHasUnits } from './unit-ledger.ts'
 
 /** A sinking fund inside a category, with its own balance, target and optional date. */
 export interface Goal {
@@ -191,7 +193,7 @@ export function goalProgress(
  * Each goal's assigned and spending for `month`, and its balance through that month.
  * Spending counts only on-budget accounts, like a category's activity.
  */
-async function goalFigures(db: SqlRunner, month: Month) {
+export async function goalFigures(db: SqlRunner, month: Month) {
   const rows = await db.query<{
     goal_id: string
     month: string
@@ -338,12 +340,15 @@ export function goalsApi({ adapter, newId, now, changes: log }: CrudDeps): Goals
            UNION ALL SELECT 1 FROM transaction_splits WHERE goal_id = ? LIMIT 1`,
           [id, id],
         )
-        if (used) throw new Error('This goal has history; archive it instead of deleting')
+        if (used || (await goalHasUnits(tx, id))) {
+          throw new Error('This goal has history; archive it instead of deleting')
+        }
         const rules = await tx.query<{ id: string }>(
           'SELECT id FROM income_rules WHERE goal_id = ?',
           [id],
         )
         for (const rule of rules) await log(tx).delete('income_rules', rule.id)
+        await clearEducationLinks(tx, log(tx), { goalId: id })
         await log(tx).delete('goals', id)
       })
     },
