@@ -135,6 +135,54 @@ describe('importing from the bank on two devices', () => {
   })
 })
 
+describe('investment accounts', () => {
+  let brokerage: string
+
+  beforeEach(async () => {
+    brokerage = (await a.api.createAccount({ name: 'Brokerage', type: 'investment' })).id
+    await converge()
+  })
+
+  it('shows settings made on one device on the other', async () => {
+    const jessica = (await a.api.getHousehold())?.members[0]?.id ?? null
+    await b.api.updateInvestmentSettings(brokerage, {
+      kind: '401k',
+      taxType: 'roth',
+      ownerId: jessica,
+      mode: 'holdings',
+    })
+    await converge()
+    expect((await a.api.listInvestmentAccounts())[0]).toMatchObject({
+      kind: '401k',
+      taxType: 'roth',
+      ownerId: jessica,
+      mode: 'holdings',
+    })
+  })
+
+  it('lands one valuation per day when both devices value the same day', async () => {
+    await a.api.recordValuation({ accountId: brokerage, date: '2026-10-31', marketValue: 100 })
+    b.clock += 60_000
+    await b.api.recordValuation({ accountId: brokerage, date: '2026-10-31', marketValue: 120 })
+    await converge()
+    expect(await a.api.listValuations(brokerage)).toMatchObject([
+      { date: '2026-10-31', marketValue: 120 },
+    ])
+  })
+
+  it('keeps a valuation deleted on one device deleted on the other', async () => {
+    const v = await a.api.recordValuation({
+      accountId: brokerage,
+      date: '2026-10-31',
+      marketValue: 1,
+    })
+    await converge()
+    await b.api.deleteValuation(v.id)
+    await converge()
+    expect(await a.api.listValuations(brokerage)).toEqual([])
+  })
+})
+
 describe('importing YNAB history', () => {
   const register = [
     'Account,Flag,Date,Payee,Category Group/Category,Category Group,Category,Memo,Outflow,Inflow,Cleared',

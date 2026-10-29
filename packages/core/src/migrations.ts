@@ -220,6 +220,47 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX payee_rules_category ON payee_rules(category_id)`,
     ],
   },
+  {
+    version: 9,
+    name: 'investment-accounts',
+    // An investment account's settings row has the account's id as its id, so two devices
+    // that set an account up offline write the same row. A valuation's id is the account
+    // and the day, so one day has one value however many devices or fetches report it.
+    // `source` records whether a person typed it or the bank reported it.
+    up: [
+      `CREATE TABLE investment_accounts (
+        id TEXT PRIMARY KEY REFERENCES accounts(id),
+        tax_type TEXT NOT NULL CHECK (tax_type IN ('roth', 'traditional', 'taxable', '529')),
+        owner_member_id TEXT REFERENCES members(id),
+        mode TEXT NOT NULL DEFAULT 'units' CHECK (mode IN ('units', 'holdings')),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE account_valuations (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        date TEXT NOT NULL CHECK (date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'),
+        market_value INTEGER NOT NULL CHECK (market_value >= 0),
+        source TEXT NOT NULL CHECK (source IN ('manual', 'sync')),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX account_valuations_account ON account_valuations(account_id, date)`,
+    ],
+  },
+  {
+    version: 10,
+    name: 'investment-kinds',
+    // What sort of account it is (IRA, 401(k), brokerage...), beside its tax treatment.
+    // Accounts that already have settings get the kind their tax type implies, or 'other'
+    // when it does not say (a Roth or traditional account could be any retirement kind).
+    up: [
+      `ALTER TABLE investment_accounts ADD COLUMN kind TEXT NOT NULL DEFAULT 'other'
+         CHECK (kind IN ('brokerage', 'ira', '401k', '403b', '457', '401a', 'sep-ira', 'simple-ira', '529', 'other'))`,
+      `UPDATE investment_accounts SET kind = CASE tax_type
+         WHEN 'taxable' THEN 'brokerage' WHEN '529' THEN '529' ELSE 'other' END`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

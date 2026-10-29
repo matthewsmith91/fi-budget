@@ -63,6 +63,33 @@ describe('migrations', () => {
     expect(await currentVersion(db)).toBe(0)
   })
 
+  it('gives existing investment accounts the kind their tax type implies', async () => {
+    const db = await openMemoryAdapter({ migrated: false })
+    await migrate(db, { migrations: MIGRATIONS.slice(0, 9) })
+    for (const [id, taxType] of [
+      ['a', 'taxable'],
+      ['b', '529'],
+      ['c', 'roth'],
+      ['d', 'traditional'],
+    ] as const) {
+      await db.exec(
+        `INSERT INTO accounts (id, name, type, on_budget, created_at) VALUES (?, ?, 'investment', 0, 't')`,
+        [id, id],
+      )
+      await db.exec(
+        `INSERT INTO investment_accounts (id, tax_type, created_at) VALUES (?, ?, 't')`,
+        [id, taxType],
+      )
+    }
+    await migrate(db)
+    expect(await db.query('SELECT id, kind FROM investment_accounts ORDER BY id')).toEqual([
+      { id: 'a', kind: 'brokerage' },
+      { id: 'b', kind: '529' },
+      { id: 'c', kind: 'other' },
+      { id: 'd', kind: 'other' },
+    ])
+  })
+
   it('exposes the latest version', () => {
     expect(LATEST_SCHEMA_VERSION).toBe(MIGRATIONS.length)
   })

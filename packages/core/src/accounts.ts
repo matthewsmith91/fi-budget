@@ -1,5 +1,10 @@
 import { cleanName, flag, type CrudDeps } from './crud.ts'
 import { dropPaymentCategory, ensurePaymentCategory, hidePaymentCategory } from './categories.ts'
+import {
+  createInvestmentSettings,
+  dropInvestmentData,
+  type InvestmentSettings,
+} from './investments.ts'
 import type { SqlRunner } from './storage.ts'
 
 export const ACCOUNT_TYPES = ['checking', 'credit', 'savings', 'investment'] as const
@@ -16,7 +21,13 @@ export interface Account {
 
 export interface AccountsApi {
   listAccounts(): Promise<Account[]>
-  createAccount(input: { name: string; type: AccountType; onBudget?: boolean }): Promise<Account>
+  /** `investment` sets an investment account's tax type, owner and mode; ignored for other types. */
+  createAccount(input: {
+    name: string
+    type: AccountType
+    onBudget?: boolean
+    investment?: Partial<InvestmentSettings>
+  }): Promise<Account>
   /** The type is fixed at creation: it decides how the account's balance is treated. */
   updateAccount(
     id: string,
@@ -71,7 +82,7 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
       )
       return rows.map(toAccount)
     },
-    async createAccount({ name, type, onBudget }) {
+    async createAccount({ name, type, onBudget, investment }) {
       const clean = cleanName(name, 'Account')
       if (!ACCOUNT_TYPES.includes(type)) throw new Error(`Unknown account type "${String(type)}"`)
       const budgeted = onBudget ?? type !== 'investment'
@@ -89,6 +100,9 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
         })
         if (type === 'credit' && budgeted) {
           await ensurePaymentCategory(tx, log(tx), { id, name: clean }, now())
+        }
+        if (type === 'investment') {
+          await createInvestmentSettings(tx, log(tx), id, investment ?? {}, now())
         }
         return getAccount(tx, id)
       })
@@ -123,6 +137,7 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
         )
         if (used) throw new Error('This account has transactions; close it instead of deleting')
         await dropPaymentCategory(tx, log(tx), id)
+        await dropInvestmentData(tx, log(tx), id)
         await log(tx).delete('accounts', id)
       })
     },

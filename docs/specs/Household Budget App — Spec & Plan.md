@@ -253,8 +253,8 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 
 ### Phase 4 — Investments
 
-- [ ] Investment account settings: tax type, owner, mode
-- [ ] Valuations from sync or manual entry
+- [x] Investment account settings: tax type, owner, mode
+- [x] Valuations from sync or manual entry
 - [ ] Unit ledger: buys on cleared contribution transfers, sells on withdrawals, dividends to Unassigned
 - [ ] Per-goal value, cost basis, gain/loss and realized gains
 - [ ] Holding-level mode for accounts with different investments per goal

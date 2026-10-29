@@ -6,6 +6,7 @@ import { changeLog } from './changes.ts'
 import { categoriesApi, type CategoriesApi } from './categories.ts'
 import { newDeviceId } from './hlc.ts'
 import { importsApi, type ImportsApi } from './imports.ts'
+import { investmentsApi, type InvestmentsApi } from './investments.ts'
 import { currentVersion } from './migrations.ts'
 import { payeeRulesApi, type PayeeRulesApi } from './payee-rules.ts'
 import { reconcileApi, type ReconcileApi } from './reconcile.ts'
@@ -49,6 +50,7 @@ export interface BudgetApi
     ReconcileApi,
     ActivityApi,
     ImportsApi,
+    InvestmentsApi,
     PayeeRulesApi,
     YnabApi {
   getStatus(): Promise<AppStatus>
@@ -117,6 +119,7 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...transactionsApi(crud),
     ...reconcileApi(crud),
     ...importsApi(crud),
+    ...investmentsApi(crud),
     ...payeeRulesApi(crud),
     ...ynabApi(crud),
     ...activityApi({ ...crud, deviceId, mode: sync ? 'sync' : 'local' }),

@@ -554,3 +554,80 @@ test('YNAB history comes in from its export, and payee rules can use the new cat
   await page.getByRole('button', { name: 'Delete the rule for Kroger' }).click()
   await expect(page.getByText('No rules yet')).toBeVisible()
 })
+
+test('an investment account is set up in the add-account dialog and keeps a value history', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Fidelity')
+  // the investment settings only appear for an investment account
+  await expect(dialog.getByLabel('Tax type')).toHaveCount(0)
+  await dialog.getByLabel('Account type').selectOption('investment')
+  await expect(dialog.getByLabel('Investment type')).toHaveValue('brokerage')
+  await expect(dialog.getByLabel('Tax type').getByRole('option')).toHaveText(['Taxable'])
+  await dialog.getByLabel('Investment type').selectOption({ label: '401(k)' })
+  await expect(dialog.getByLabel('Tax type')).toHaveValue('traditional')
+  await expect(dialog.getByLabel('Tax type').getByRole('option')).toHaveText([
+    'Traditional',
+    'Roth',
+  ])
+  await dialog.getByLabel('Tax type').selectOption({ label: 'Roth' })
+  await dialog.getByLabel('Owner').selectOption({ label: 'Jessica' })
+  await dialog.getByLabel('Mode').selectOption('holdings')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+
+  await expect(page.getByRole('heading', { name: 'Fidelity' })).toBeVisible()
+  // the details stay closed until the gear is pressed
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Investment settings and values for Fidelity' }).click()
+  const card = page.getByRole('dialog')
+  await expect(card.getByLabel('Investment type')).toHaveValue('401k')
+  await expect(card.getByLabel('Tax type')).toHaveValue('roth')
+  await expect(card.getByLabel('Owner')).toContainText('Jessica')
+  await expect(card.getByLabel('Mode')).toHaveValue('holdings')
+  await expect(card).toContainText('No value recorded yet')
+
+  await card.getByLabel('Date').fill('2026-10-31')
+  await card.getByLabel('Market value').fill('84200')
+  await card.getByRole('button', { name: 'Save value' }).click()
+  await expect(card).toContainText('$84,200.00')
+  await expect(card).toContainText('on 10/31/2026, entered')
+
+  // recording the day again replaces it
+  await card.getByLabel('Market value').fill('84250')
+  await card.getByRole('button', { name: 'Save value' }).click()
+  await expect(card.getByRole('listitem')).toHaveCount(1)
+  await expect(card).toContainText('$84,250.00')
+
+  // the settings can still be changed, and everything survives a reload
+  await card.getByLabel('Tax type').selectOption({ label: 'Traditional' })
+  // changing to a kind that doesn't allow the tax type moves it to that kind's usual one
+  await card.getByLabel('Investment type').selectOption({ label: '529 plan' })
+  await expect(card.getByLabel('Tax type')).toHaveValue('529')
+  await card.getByLabel('Investment type').selectOption({ label: 'IRA' })
+  await card.getByLabel('Tax type').selectOption({ label: 'Traditional' })
+  await card.getByRole('button', { name: 'Done' }).click()
+  await expect(card).toBeHidden()
+  await page.reload()
+  await page.getByRole('button', { name: 'Investment settings and values for Fidelity' }).click()
+  await expect(card.getByLabel('Investment type')).toHaveValue('ira')
+  await expect(card.getByLabel('Tax type')).toHaveValue('traditional')
+  await expect(card.getByLabel('Mode')).toHaveValue('holdings')
+  await expect(card).toContainText('$84,250.00')
+
+  await card.getByRole('button', { name: /Delete the value from 10\/31\/2026/ }).click()
+  await expect(card).toContainText('No value recorded yet')
+  await card.getByRole('button', { name: 'Done' }).click()
+
+  // a checking account has none of this
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Account type').selectOption('checking')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Investment settings and values/ })).toHaveCount(0)
+})

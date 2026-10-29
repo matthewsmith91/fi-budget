@@ -819,6 +819,11 @@ tr:focus-within .row-actions {
   color: var(--fg);
 }
 
+.dialog.tall {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+
 .dialog::backdrop {
   background: rgb(8 12 24 / 0.55);
 }

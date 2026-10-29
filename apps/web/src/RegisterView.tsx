@@ -9,6 +9,7 @@ import {
   type TransactionSplit,
 } from '@budget-fi/core'
 import { useState } from 'react'
+import { InvestmentDetails } from './InvestmentDetails.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
@@ -140,6 +141,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
             Reconcile
           </button>
         )}
+        {account?.type === 'investment' && <InvestmentDetails accountId={account.id} />}
         {account && <AccountMenu account={account} run={run} />}
       </div>
 

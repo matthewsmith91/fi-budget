@@ -62,7 +62,20 @@ export function BankPanel() {
       const result = await bankApi.checkBalances(id)
       setChecks((all) => ({ ...all, [id]: result }))
       links.reload()
+      if (result.ok) await recordValuations(result)
     })
+
+  /** Balances of bank accounts linked to investment accounts become that day's valuation. */
+  const recordValuations = async (result: Extract<LinkFetch, { ok: true }>) => {
+    const written = await budget.recordBankBalances(
+      result.accounts.map((a) => ({
+        externalId: a.id,
+        balance: a.balance,
+        balanceDate: a.balanceDate,
+      })),
+    )
+    if (written > 0) refresh()
+  }
 
   const map = (external: ExternalAccount | AccountMapping, accountId: string | null) =>
     run(async () => {
@@ -84,6 +97,7 @@ export function BankPanel() {
       if (!result.ok) return
       const summary = await budget.importTransactions(result.accounts)
       setImports((all) => ({ ...all, [id]: summary }))
+      await recordValuations(result)
       refresh()
     })
 
