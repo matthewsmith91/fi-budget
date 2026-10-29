@@ -1,4 +1,5 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
+import { request } from './server.ts'
 
 export interface Person {
   id: string
@@ -19,32 +20,7 @@ export interface Invite {
   expiresAt: string
 }
 
-/** The server is the only thing here that can be missing: the budget itself works without it. */
-export class ServerUnavailableError extends Error {
-  constructor() {
-    super('The sync server cannot be reached')
-  }
-}
-
-async function call<T>(path: string, body?: unknown): Promise<T> {
-  let res: Response
-  try {
-    res = await fetch(`/api/auth/${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    })
-  } catch {
-    throw new ServerUnavailableError()
-  }
-  // A static host (or the dev server with no API) answers /api with the app shell, not JSON.
-  if (!res.headers.get('content-type')?.includes('application/json')) {
-    throw new ServerUnavailableError()
-  }
-  const json = (await res.json()) as T & { error?: string }
-  if (!res.ok) throw new Error(json.error ?? `Request failed (${res.status})`)
-  return json
-}
+const call = <T>(path: string, body?: unknown) => request<T>(`/api/auth/${path}`, body)
 
 export const authApi = {
   status: () => call<AuthStatus>('status'),

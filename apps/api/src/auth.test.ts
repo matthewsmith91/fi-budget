@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import type { Server } from 'node:http'
 import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -21,6 +22,7 @@ beforeEach(async () => {
     db,
     staticDir: '/nonexistent',
     auth: { rpId: RP_ID, origins: [ORIGIN], now: () => clock },
+    bank: { key: randomBytes(32) },
   }).listen(0)
   await new Promise((resolve) => server.once('listening', resolve))
   const address = server.address()

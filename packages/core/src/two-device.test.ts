@@ -73,6 +73,59 @@ beforeEach(async () => {
   await converge()
 })
 
+describe('importing from the bank on two devices', () => {
+  const data = [
+    {
+      id: 'ACT-1',
+      name: 'Chase Checking',
+      transactions: [
+        { id: 'T1', posted: '2026-10-05', amount: -4_250, description: 'KROGER' },
+        { id: 'T2', posted: '2026-10-06', amount: -900, description: 'COFFEE' },
+      ],
+    },
+  ]
+
+  beforeEach(async () => {
+    await a.api.mapExternalAccount({ externalId: 'ACT-1', name: 'Chase', accountId: checking })
+    await converge()
+  })
+
+  it('shares the account mapping', async () => {
+    expect(await b.api.listAccountMappings()).toEqual([
+      { externalId: 'ACT-1', name: 'Chase', org: '', accountId: checking },
+    ])
+  })
+
+  it('lands one row per bank transaction when both devices import the same fetch', async () => {
+    await a.api.importTransactions(data)
+    await b.api.importTransactions(data)
+    await converge()
+    const inbox = await a.api.listInbox()
+    expect(inbox.map((i) => i.transaction.importId)).toEqual(['ACT-1:T1', 'ACT-1:T2'])
+    expect(await a.api.listTransactions()).toHaveLength(3)
+  })
+
+  it('shows an approval made on one device on the other', async () => {
+    await a.api.importTransactions(data)
+    await converge()
+    const [first] = await b.api.listInbox()
+    await b.api.updateTransaction(first!.transaction.id, { categoryId: groceries })
+    await b.api.approveTransactions([first!.transaction.id])
+    await converge()
+    expect((await a.api.listInbox()).map((i) => i.transaction.importId)).toEqual(['ACT-1:T2'])
+  })
+
+  it('keeps a dismissed transaction dismissed on both devices', async () => {
+    await a.api.importTransactions(data)
+    await converge()
+    const [first] = await b.api.listInbox()
+    await b.api.deleteTransaction(first!.transaction.id)
+    await converge()
+    expect(await a.api.importTransactions(data)).toMatchObject({ added: 0, dismissed: 1 })
+    expect(await a.api.listInbox()).toHaveLength(1)
+  })
+})
+
 describe('two devices editing the same budget offline', () => {
   it('keeps the transactions each device entered', async () => {
     await a.api.createTransaction({

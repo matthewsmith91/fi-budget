@@ -176,6 +176,33 @@ export const MIGRATIONS: readonly Migration[] = [
          FROM accounts a WHERE a.type = 'credit' AND a.on_budget = 1`,
     ],
   },
+  {
+    version: 7,
+    name: 'bank-import',
+    // approved = 0 puts a transaction in the inbox: imported from the bank, not yet looked
+    // at. external_accounts maps a bank account (its SimpleFIN id) to an app account, and
+    // dismissed_imports remembers bank transactions that were thrown away so the next
+    // fetch does not bring them back. Both are keyed by deterministic ids so two devices
+    // that do the same thing converge on one row. Existing rows count as approved.
+    up: [
+      `ALTER TABLE transactions ADD COLUMN approved INTEGER NOT NULL DEFAULT 1 CHECK (approved IN (0, 1))`,
+      `CREATE INDEX transactions_import ON transactions(import_id) WHERE import_id IS NOT NULL`,
+      `CREATE INDEX transactions_unapproved ON transactions(date) WHERE approved = 0`,
+      `CREATE TABLE external_accounts (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        org TEXT NOT NULL DEFAULT '',
+        account_id TEXT REFERENCES accounts(id),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE dismissed_imports (
+        id TEXT PRIMARY KEY,
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

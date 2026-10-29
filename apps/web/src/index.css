@@ -1098,3 +1098,25 @@ tr:focus-within .row-actions {
 .dialog label.check input {
   width: auto;
 }
+
+.nav-badge {
+  background: #ffffff;
+  color: var(--side-bg, #1f2d3d);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.tag {
+  display: inline-block;
+  padding: 0 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 0.3rem;
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+
+.duplicate-row td {
+  padding-top: 0;
+}

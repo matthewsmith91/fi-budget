@@ -1,5 +1,6 @@
 import { createApp } from './app.ts'
 import { ensureSetupInvite } from './auth.ts'
+import { loadBankKey } from './bank.ts'
 import { loadConfig } from './config.ts'
 import { DB_FILE, openDatabase } from './db.ts'
 import { join } from 'node:path'
@@ -10,6 +11,7 @@ const app = createApp({
   db,
   staticDir: config.staticDir,
   auth: { rpId: config.rpId, origins: config.origins },
+  bank: { key: loadBankKey(config.dataDir) },
 })
 
 // Until the first person registers there is nobody to hand out a pairing code, so print one.

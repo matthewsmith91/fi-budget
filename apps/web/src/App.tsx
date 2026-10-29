@@ -7,6 +7,7 @@ import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { DataProvider } from './DataProvider.tsx'
 import { getBackupState } from './device-settings.ts'
+import { InboxView } from './InboxView.tsx'
 import { usePersistentStorage, useServiceWorker } from './hooks.ts'
 import { RegisterView } from './RegisterView.tsx'
 import { useRoute } from './route.ts'
@@ -29,6 +30,7 @@ function Shell() {
   const household = useBudgetQuery(() => budget.getHousehold())
   const accounts = useBudgetQuery(() => budget.listAccounts())
   const balances = useBudgetQuery(() => budget.getAccountBalances())
+  const inbox = useBudgetQuery(() => budget.listTransactions({ unapproved: true }))
   const persist = usePersistentStorage()
   const sw = useServiceWorker()
   const route = useRoute()
@@ -47,6 +49,8 @@ function Shell() {
     content = <SetupView onCreated={refresh} />
   } else if (route.view === 'budget') {
     content = <BudgetView today={now} />
+  } else if (route.view === 'inbox') {
+    content = <InboxView accounts={accounts.data ?? []} />
   } else if (route.view === 'activity') {
     content = <ActivityView />
   } else if (route.view === 'settings') {
@@ -90,6 +94,7 @@ function Shell() {
         household={household.data ?? null}
         accounts={accounts.data ?? []}
         balances={balances.data ?? []}
+        inboxCount={inbox.data?.length ?? 0}
         route={route}
         open={navOpen}
         onNavigate={() => setNavOpen(false)}

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -18,6 +19,7 @@ async function start(staticDir: string) {
     db,
     staticDir,
     auth: { rpId: 'localhost', origins: ['http://localhost:5173'] },
+    bank: { key: randomBytes(32) },
   }).listen(0)
   await new Promise((resolve) => server.once('listening', resolve))
   const address = server.address()

@@ -2,6 +2,7 @@ import QRCode from 'qrcode'
 import { useEffect, useState } from 'react'
 import { authApi, pairingCodeFromHash, pairingLink, type Invite, type InviteKind } from './auth.ts'
 import { messageOf } from './errors.ts'
+import { BankPanel } from './BankPanel.tsx'
 import { useAsync } from './hooks.ts'
 import { SyncPanel } from './SyncPanel.tsx'
 
@@ -155,6 +156,7 @@ function SignedIn(props: { name: string; onChange: () => void }) {
       </div>
       {invite && <InviteCard invite={invite} />}
       <SyncPanel />
+      <BankPanel />
       {error && (
         <p className="error" role="alert">
           {error}

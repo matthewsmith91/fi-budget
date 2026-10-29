@@ -1,3 +1,4 @@
+import type { ChangeLog } from './changes.ts'
 import type { CrudDeps } from './crud.ts'
 import { flag } from './crud.ts'
 import { cents } from './money.ts'
@@ -20,6 +21,10 @@ export interface Transaction {
   amount: number
   cleared: boolean
   reconciled: boolean
+  /** False for a transaction imported from the bank that nobody has approved yet (the inbox). */
+  approved: boolean
+  /** The bank's id for an imported transaction, or one a manual entry was matched to. */
+  importId: string | null
   /** Shared by the two legs of a transfer; null on an ordinary transaction. */
   transferPairId: string | null
   /** The account on the other leg of a transfer; null if this isn't one or the other leg is gone. */
@@ -93,7 +98,7 @@ export interface NewTransfer {
 
 export interface TransactionsApi {
   /** Newest first. */
-  listTransactions(filter?: { accountId?: string }): Promise<Transaction[]>
+  listTransactions(filter?: { accountId?: string; unapproved?: boolean }): Promise<Transaction[]>
   /** Manual entry of a transaction in one category, or split across several. */
   createTransaction(input: NewTransaction): Promise<Transaction>
   /**
@@ -107,7 +112,10 @@ export interface TransactionsApi {
    * be changed, and a category only on the budget leg of a budget-to-tracking transfer.
    */
   updateTransaction(id: string, changes: TransactionPatch): Promise<Transaction>
-  /** Deleting either leg of a transfer deletes both. */
+  /**
+   * Deleting either leg of a transfer deletes both. A transaction that came from the bank
+   * is remembered as dismissed, so fetching the bank again does not bring it back.
+   */
   deleteTransaction(id: string): Promise<void>
   getAccountBalances(): Promise<AccountBalance[]>
 }
@@ -120,6 +128,8 @@ interface TransactionRow {
   amount: number
   cleared: number
   reconciled: number
+  approved: number
+  import_id: string | null
   transfer_pair_id: string | null
   transfer_account_id: string | null
 }
@@ -129,6 +139,17 @@ interface SplitRow {
   transaction_id: string
   category_id: string | null
   amount: number
+}
+
+/** Remembers a bank transaction that was thrown away, once, so imports skip it from now on. */
+export async function dismissImport(
+  db: SqlRunner,
+  changes: ChangeLog,
+  importId: string,
+  at: string,
+) {
+  const [known] = await db.query('SELECT 1 AS x FROM dismissed_imports WHERE id = ?', [importId])
+  if (!known) await changes.insert('dismissed_imports', { id: importId, created_at: at })
 }
 
 const DATE = /^\d{4}-\d\d-\d\d$/
@@ -193,7 +214,8 @@ export async function loadTransactions(
   params: string[],
 ): Promise<Transaction[]> {
   const rows = await db.query<TransactionRow & Record<string, never>>(
-    `SELECT id, account_id, date, payee, amount, cleared, reconciled, transfer_pair_id,
+    `SELECT id, account_id, date, payee, amount, cleared, reconciled, approved, import_id,
+       transfer_pair_id,
        (SELECT p.account_id FROM transactions p
          WHERE p.transfer_pair_id = t.transfer_pair_id AND p.id <> t.id) AS transfer_account_id
      FROM transactions t ${where} ORDER BY date DESC, created_at DESC, id DESC`,
@@ -219,6 +241,8 @@ export async function loadTransactions(
     amount: r.amount,
     cleared: r.cleared === 1,
     reconciled: r.reconciled === 1,
+    approved: r.approved === 1,
+    importId: r.import_id,
     transferPairId: r.transfer_pair_id,
     transferAccountId: r.transfer_account_id,
     splits: byTransaction.get(r.id) ?? [],
@@ -295,10 +319,17 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
   }
 
   return {
-    listTransactions: (filter = {}) =>
-      filter.accountId === undefined
-        ? loadTransactions(adapter, '', [])
-        : loadTransactions(adapter, 'WHERE t.account_id = ?', [filter.accountId]),
+    listTransactions(filter = {}) {
+      const conditions: string[] = []
+      const params: string[] = []
+      if (filter.accountId !== undefined) {
+        conditions.push('t.account_id = ?')
+        params.push(filter.accountId)
+      }
+      if (filter.unapproved) conditions.push('t.approved = 0')
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+      return loadTransactions(adapter, where, params)
+    },
 
     async createTransaction(input) {
       const { accountId, date, payee, cleared } = input
@@ -476,6 +507,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           throw new Error('The other side of this transfer is reconciled and locked')
         }
         const changes = log(tx)
+        if (current.importId !== null) await dismissImport(tx, changes, current.importId, now())
         for (const gone of partner ? [current, partner] : [current]) {
           for (const split of gone.splits) await changes.delete('transaction_splits', split.id)
           await changes.delete('transactions', gone.id)

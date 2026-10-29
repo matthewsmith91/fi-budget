@@ -15,6 +15,8 @@ export const SYNCED_TABLES: readonly string[] = [
   'allocations',
   'transactions',
   'transaction_splits',
+  'external_accounts',
+  'dismissed_imports',
 ]
 
 export class SyncError extends Error {

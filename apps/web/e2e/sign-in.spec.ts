@@ -131,6 +131,9 @@ test('signs in and pairs devices and people, then syncs a new device from the se
     laptop.getByRole('status').filter({ hasText: 'full copy for new devices' }),
   ).toBeVisible()
   await expect(laptop.getByRole('button', { name: 'Sync now' })).toBeVisible()
+  // The bank section reaches the real /api/bank; nothing is linked, and no token is sent anywhere.
+  await expect(laptop.getByText('No bank is connected yet.')).toBeVisible()
+  await expect(laptop.getByRole('button', { name: 'Connect bank' })).toBeDisabled()
 
   // The status banner reports the device as synced; a change makes it unsynced until it is sent
   const banner = laptop.locator('[data-sync]')

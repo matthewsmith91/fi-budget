@@ -4,6 +4,7 @@ export type Route =
   | { view: 'budget' }
   | { view: 'accounts' }
   | { view: 'account'; id: string }
+  | { view: 'inbox' }
   | { view: 'activity' }
   | { view: 'settings' }
 
@@ -12,6 +13,7 @@ export function parseRoute(hash: string): Route {
   const [, first, id] = hash.split('?')[0]!.split('/')
   if (first === 'accounts')
     return id ? { view: 'account', id: decodeURIComponent(id) } : { view: 'accounts' }
+  if (first === 'inbox') return { view: 'inbox' }
   if (first === 'activity') return { view: 'activity' }
   if (first === 'settings') return { view: 'settings' }
   return { view: 'budget' }
@@ -21,6 +23,7 @@ export const hrefFor = {
   budget: '#/budget',
   accounts: '#/accounts',
   account: (id: string) => `#/accounts/${encodeURIComponent(id)}`,
+  inbox: '#/inbox',
   activity: '#/activity',
   settings: '#/settings',
 }

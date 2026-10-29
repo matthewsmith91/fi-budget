@@ -235,7 +235,17 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                 >
                   <td>{shortDate(t.date)}</td>
                   {showAccountColumn && <td>{accountById.get(t.accountId)?.name ?? ''}</td>}
-                  <td>{payeeLabel(t, accountById)}</td>
+                  <td>
+                    {payeeLabel(t, accountById)}
+                    {!t.approved && (
+                      <>
+                        {' '}
+                        <a className="tag" href="#/inbox" onClick={(e) => e.stopPropagation()}>
+                          New
+                        </a>
+                      </>
+                    )}
+                  </td>
                   <td>{categoryLabel(t, categoryName, accountById)}</td>
                   <td className="num">{t.amount < 0 ? money(-t.amount) : ''}</td>
                   <td className="num">{t.amount > 0 ? money(t.amount) : ''}</td>

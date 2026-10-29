@@ -4,7 +4,9 @@ import type { DatabaseSync } from 'node:sqlite'
 import express, { type ErrorRequestHandler, type Express } from 'express'
 import { AuthError } from './auth.ts'
 import { createAuthRouter, sameOriginOnly } from './auth-routes.ts'
+import { createBankRouter } from './bank.ts'
 import { schemaVersion } from './db.ts'
+import type { Fetch } from './simplefin.ts'
 import { createSyncRouter } from './sync.ts'
 
 export interface AppDeps {
@@ -12,6 +14,8 @@ export interface AppDeps {
   staticDir: string
   /** Passkey settings: the hostname people sign in on and the origins that may do so. */
   auth: { rpId: string; origins: string[]; now?: () => number }
+  /** Seals bank credentials at rest; `fetch` is replaced in tests so they never reach SimpleFIN. */
+  bank: { key: Buffer; fetch?: Fetch }
 }
 
 const apiErrors: ErrorRequestHandler = (error, _req, res, _next) => {
@@ -25,7 +29,7 @@ const apiErrors: ErrorRequestHandler = (error, _req, res, _next) => {
   }
 }
 
-export function createApp({ db, staticDir, auth }: AppDeps): Express {
+export function createApp({ db, staticDir, auth, bank }: AppDeps): Express {
   const app = express()
   app.disable('x-powered-by')
   // A sync batch is bigger than the default body limit; this parser runs first and the
@@ -50,6 +54,7 @@ export function createApp({ db, staticDir, auth }: AppDeps): Express {
   app.use('/api/auth', createAuthRouter({ db, rpName: 'Household Budget', ...auth }))
 
   app.use('/api/sync', createSyncRouter({ db, now: auth.now }))
+  app.use('/api/bank', createBankRouter({ db, now: auth.now, ...bank }))
 
   // Everything under /api is server-owned; an unknown path must not fall through to the app shell.
   app.use('/api', (_req, res) => {

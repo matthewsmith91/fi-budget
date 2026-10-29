@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 
 /**
  * Append-only, like the device-side migrations: never edit a released entry, add a new one.
- * Bank-sync tables arrive with their own migrations.
+ * Later bank-sync tables (import queue, account mapping) arrive with their own migrations.
  */
 export const MIGRATIONS: readonly string[] = [
   // 1: sign-in. Users and their passkeys, browser sessions, and one-time pairing codes.
@@ -59,6 +59,16 @@ export const MIGRATIONS: readonly string[] = [
     bytes BLOB NOT NULL,
     created_at TEXT NOT NULL,
     created_by TEXT REFERENCES users(id) ON DELETE SET NULL
+  );`,
+  // 4: bank connections. `access_token` is the provider credential, sealed with the server's
+  // bank key (see bank.ts); it is never sent to a device or written to a log.
+  `CREATE TABLE bank_links (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL CHECK (provider IN ('simplefin')),
+    access_token TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    last_fetched_at TEXT
   );`,
 ]
 

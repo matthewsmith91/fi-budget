@@ -6,6 +6,8 @@ interface Props {
   household: Household | null
   accounts: Account[]
   balances: AccountBalance[]
+  /** Imported transactions waiting for approval. */
+  inboxCount: number
   route: Route
   open: boolean
   onNavigate: () => void
@@ -16,6 +18,7 @@ export function Sidebar({
   household,
   accounts,
   balances,
+  inboxCount,
   route,
   open,
   onNavigate,
@@ -66,6 +69,16 @@ export function Sidebar({
 
       <nav>
         {link(hrefFor.budget, 'Budget', route.view === 'budget')}
+        {link(
+          hrefFor.inbox,
+          'Inbox',
+          route.view === 'inbox',
+          inboxCount > 0 && (
+            <span className="nav-badge" aria-label={`${inboxCount} to review`}>
+              {inboxCount}
+            </span>
+          ),
+        )}
         {link(hrefFor.accounts, 'All Accounts', route.view === 'accounts')}
         {link(hrefFor.activity, 'Activity', route.view === 'activity')}
 

@@ -387,3 +387,80 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await expect(feed).toContainText('Transferred $30.00 out of Checking')
   await expect(feed).toContainText('Added “Kroger” for -$30.00 in Visa')
 })
+
+test('imported transactions wait in the inbox until they are categorized and approved', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Account type').selectOption('checking')
+  await dialog.getByLabel('Current balance').fill('500')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Food')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Food' }).click()
+  await page.getByLabel('New category in Food').fill('Groceries')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(page.getByRole('row', { name: /Groceries/ })).toBeVisible()
+
+  // The bank fetch needs a real SimpleFIN account, so stand in for it: add what an import
+  // writes (an unapproved, cleared transaction with the bank's id) to an exported budget.
+  await openSettings(page)
+  const jsonPath = testInfo.outputPath('budget.json')
+  await exportAs(page, 'Export JSON', jsonPath)
+  const exported = JSON.parse(await readFile(jsonPath, 'utf8'))
+  const start = exported.tables.transactions[0]
+  const startSplit = exported.tables.transaction_splits[0]
+  exported.tables.transactions.push({
+    ...start,
+    id: 'import-ACT-1:T1',
+    date: '2026-10-20',
+    payee: 'KROGER #123',
+    amount: -4250,
+    cleared: 1,
+    approved: 0,
+    import_id: 'ACT-1:T1',
+  })
+  exported.tables.transaction_splits.push({
+    ...startSplit,
+    id: 'import-ACT-1:T1:split',
+    transaction_id: 'import-ACT-1:T1',
+    category_id: null,
+    amount: -4250,
+  })
+  const withImport = testInfo.outputPath('with-import.json')
+  await writeFile(withImport, JSON.stringify(exported))
+  page.once('dialog', (d) => void d.accept())
+  const safety = page.waitForEvent('download')
+  await page.locator('input[type=file]').setInputFiles(withImport)
+  await safety
+
+  await expect(sidebar(page).getByRole('link', { name: /Inbox/ })).toContainText('1')
+  await sidebar(page).getByRole('link', { name: /Inbox/ }).click()
+  const row = page.getByRole('row', { name: /KROGER #123/ })
+  await expect(row).toContainText('$42.50')
+
+  // the register flags it as new until it is approved
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await expect(page.getByRole('row', { name: /KROGER #123/ })).toContainText('New')
+  await sidebar(page).getByRole('link', { name: /Inbox/ }).click()
+
+  await page.getByLabel('Category for KROGER #123').selectOption({ label: 'Groceries' })
+  await page.getByRole('button', { name: 'Approve KROGER #123' }).click()
+  await expect(page.getByText('Nothing to review')).toBeVisible()
+  await expect(sidebar(page).getByRole('link', { name: /Inbox/ })).not.toContainText('1')
+
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  const approved = page.getByRole('row', { name: /KROGER #123/ })
+  await expect(approved).toContainText('Groceries')
+  await expect(approved).not.toContainText('New')
+})
