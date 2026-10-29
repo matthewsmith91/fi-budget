@@ -10,26 +10,11 @@ The full spec and phased roadmap live in `docs/specs/Household Budget App — Sp
 
 ## Project Layout
 
-npm workspaces monorepo orchestrated by Turborepo.
+npm workspaces monorepo orchestrated by Turborepo: `apps/web` (React 19 + Vite PWA), `apps/api` (Express 5 + `node:sqlite` server), `packages/core` (pure TS domain layer, no DOM), `packages/ui` (shared components, currently empty).
 
-```
-budget-fi/
-├── package.json       # Workspace root (apps/*, packages/*), turbo + prettier scripts
-├── turbo.json         # Task pipeline: build, dev, lint, typecheck, test
-├── .github/workflows/ci.yml   # format, lint, typecheck, test, build, e2e
-├── Dockerfile, compose.yaml, Caddyfile   # one image (app + server) behind Caddy for HTTPS
-├── apps/
-│   ├── web/           # React 19 + Vite + TypeScript PWA (oxlint for linting)
-│   │   ├── src/       # UI; client.ts is the only handle on the domain layer. App.tsx is the shell (hash routes): Sidebar (swaps to a settings sidebar on `#/settings`, with pages `household`, `connections`, `payee-rules`, `imports`, `backups`; SettingsView picks the page), BudgetView (categories table), RegisterView (account ledger, with transfer and reconcile dialogs), InboxView (imported transactions to approve, with payee-rule and suggestion helpers), QueueImporter (takes the server's daily pull into the budget), PayeeRulesPanel and YnabImportPanel (Settings), ActivityView (who changed what), SettingsView; SyncBanner shows synced / offline / N changes not yet synced and auto-syncs (sync-state.ts holds the pure logic)
-│   │   │              # Views read with useBudgetQuery and call refresh() (data.ts) after any write
-│   │   ├── src/worker/  # budget.worker.ts: opens SQLite in OPFS, runs migrations, serves the RPC API
-│   │   └── e2e/       # Playwright tests against the production build (real Chrome)
-│   └── api/           # Express 5 + node:sqlite server: serves the built web app, /health, /api/auth (passkey sign-in, sessions, one-time pairing codes), /api/sync (relay of change messages, signed-in only), /api/bank (SimpleFIN proxy: link a bank with a setup token, fetch balances and transactions as integer cents, and the import queue the daily pull fills; signed-in only), /api/suggest (optional LLM category suggestions)
-└── packages/
-    ├── core/          # @budget-fi/core: pure TS domain layer, no DOM
-    │   └── src/       # money, storage adapter, SQLite adapter, migrations, export/import, RPC, BudgetApi, change log, transactions (splits, transfers), reconciliation, activity feed, sync (merge, engine, Merkle trie)
-    └── ui/            # @budget-fi/ui: shared component library (currently empty)
-```
+- `apps/web/src/client.ts` is the only handle on the domain layer. Views read with `useBudgetQuery` and call `refresh()` (`data.ts`) after any write.
+- `apps/web/src/worker/budget.worker.ts` opens SQLite in OPFS, runs migrations and serves the RPC API. `apps/web/e2e` holds Playwright tests that run against the production build in real Chrome.
+- `apps/web/src/sync-state.ts` holds the pure logic behind `SyncBanner`. The settings sidebar swaps in on `#/settings`, with pages `household`, `connections`, `payee-rules`, `imports`, `backups`.
 
 **Where code goes:** domain logic (anything that touches money or the budget file) goes in `packages/core` so it runs unchanged in the browser worker, in Node tests, and later on the sync server and in Capacitor. The UI never touches SQLite: it calls the `BudgetApi` interface in `packages/core/src/api.ts` through `apps/web/src/client.ts`, and every call is a message to the worker. To add a capability, extend `BudgetApi`, implement it in `createBudgetApi`, and test it against an in-memory database (`openMemoryAdapter` in `test-utils.ts`).
 
@@ -37,29 +22,9 @@ budget-fi/
 
 ## Commands
 
-Run from the repo root (uses npm 11 and Turborepo):
+Commands are the scripts in the root `package.json` (npm 11 + Turborepo). `npm run test:e2e` needs Google Chrome installed. `npm run format:check` is what CI runs. `npm run build -w web` is `tsc -b && vite build` and also generates the service worker. In `apps/web`, `npx pwa-assets-generator` regenerates icons from `public/icon.svg`.
 
-```sh
-npm install            # install all workspace dependencies
-npm run dev            # run all dev servers (web via Vite, api via tsx watch on :3001)
-npm run build          # build all apps
-npm run lint           # oxlint (apps/web)
-npm run typecheck      # tsc in web, core, api
-npm test               # unit tests (Vitest) in core and api
-npm run test:e2e       # Playwright against a production build; needs Google Chrome installed
-npm run format         # prettier --write (format:check is what CI runs)
-```
-
-Per-package, via workspaces:
-
-```sh
-npm run dev -w web           # Vite dev server
-npm test -w @budget-fi/core  # core unit tests
-npm run build -w web         # tsc -b && vite build (also generates the service worker)
-npx pwa-assets-generator     # in apps/web: regenerate icons from public/icon.svg
-```
-
-Self-hosting: `DOMAIN=budget.example.com docker compose up -d` builds one image that serves the static app and the server from the same origin, with Caddy in front for HTTPS. The server's SQLite file lives in the `data` volume (`DATA_DIR`, default `./data` outside Docker). In `npm run dev` Vite proxies `/api` and `/health` to the server so the app sees one origin there too. Passkeys are bound to the origin: set `ORIGIN` (compose derives it from `DOMAIN`; the hostname becomes the RP ID; dev defaults to `http://localhost:5173` and the server port). With no users yet the server logs a one-time setup code at startup; the first person enters it in Settings, then pairs devices or the other person from there (max two people). Category suggestions in the inbox are turned on by an Anthropic API key, saved in Settings (checked with Anthropic, then sealed in the server's `settings` table with the same key as bank credentials, and never sent back to a device) or, as a fallback a saved key overrides, `ANTHROPIC_API_KEY` (`SUGGEST_MODEL` or the Settings model field overrides the default `claude-opus-5-5`). Only payee text and category names are sent, and only when someone presses the button. The SimpleFIN access URL is sealed (AES-256-GCM) in `bank_links` with `BANK_KEY` (base64, 32 bytes) or, if unset, a `bank.key` file made in `DATA_DIR`; set `BANK_KEY` from the host's secrets to keep the key off the data volume. The server pulls each linked bank once a day (`pull.ts`, checked every half hour; six hours' retry after a failure) into `import_queue`; a device that opens the app takes the queue in and hands the ids back (`POST /api/bank/queue/applied`), leaving behind transactions from bank accounts not mapped yet. Server migrations are append-only in `apps/api/src/db.ts`; the server needs Node 22.13+ (`node:sqlite`).
+Self-hosting, deployment and server configuration (Docker/Caddy, `ORIGIN`/passkeys, `BANK_KEY`, the daily bank pull): see the `self-hosting` skill.
 
 The service worker only exists in production builds, so test PWA behavior with `npm run test:e2e` or `npm run build -w web && npx vite preview`.
 
