@@ -247,8 +247,8 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 - [x] Need/want tag on categories, with override on splits
 - [x] Needs vs wants report with trailing averages
 - [x] Emergency fund target from average Need spending; months covered today
-- [ ] Income rules engine: match, priority, percent or fixed, net or gross basis
-- [ ] Rule reversal on refunded or reversed income
+- [x] Income rules engine: match, priority, percent or fixed, net or gross basis
+- [x] Rule reversal on refunded or reversed income
 - [ ] Tithe rule set up and verified against a real month
 
 ### Phase 4 — Investments

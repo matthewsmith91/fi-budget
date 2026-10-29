@@ -8,6 +8,7 @@ import { categoriesApi, type CategoriesApi } from './categories.ts'
 import { newDeviceId } from './hlc.ts'
 import { goalsApi, type GoalsApi } from './goals.ts'
 import { importsApi, type ImportsApi } from './imports.ts'
+import { incomeRulesApi, type IncomeRulesApi } from './income-rules.ts'
 import { investmentsApi, type InvestmentsApi } from './investments.ts'
 import { currentVersion } from './migrations.ts'
 import { payeeRulesApi, type PayeeRulesApi } from './payee-rules.ts'
@@ -56,6 +57,7 @@ export interface BudgetApi
     ImportsApi,
     InvestmentsApi,
     PayeeRulesApi,
+    IncomeRulesApi,
     ReportsApi,
     EmergencyFundApi,
     YnabApi {
@@ -128,6 +130,7 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...importsApi(crud),
     ...investmentsApi(crud),
     ...payeeRulesApi(crud),
+    ...incomeRulesApi(crud),
     ...reportsApi(crud),
     ...emergencyFundApi(crud),
     ...ynabApi(crud),

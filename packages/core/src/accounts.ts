@@ -143,6 +143,11 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
         )
         for (const goal of held)
           await log(tx).update('goals', goal.id, { held_in_account_id: null })
+        const rules = await tx.query<{ id: string }>(
+          'SELECT id FROM income_rules WHERE account_id = ?',
+          [id],
+        )
+        for (const rule of rules) await log(tx).delete('income_rules', rule.id)
         await dropPaymentCategory(tx, log(tx), id)
         await dropInvestmentData(tx, log(tx), id)
         await log(tx).delete('accounts', id)

@@ -755,3 +755,70 @@ describe('random edits on both devices', () => {
     await converge()
   })
 })
+
+describe('income rules on two devices', () => {
+  const paycheck = [
+    {
+      id: 'ACT-1',
+      name: 'Chase Checking',
+      transactions: [
+        { id: 'P1', posted: '2026-10-15', amount: 200_000, description: 'ACME PAYROLL' },
+      ],
+    },
+  ]
+
+  beforeEach(async () => {
+    await a.api.mapExternalAccount({ externalId: 'ACT-1', name: 'Chase', accountId: checking })
+    await a.api.createIncomeRule({
+      name: 'Tithe',
+      match: 'Acme Payroll',
+      percent: 10,
+      categoryId: groceries,
+    })
+    await converge()
+  })
+
+  it('writes one allocation when both devices approve the same paycheck offline', async () => {
+    await a.api.importTransactions(paycheck)
+    await b.api.importTransactions(paycheck)
+    await converge()
+    const [item] = await a.api.listInbox()
+    await a.api.approveTransactions([item!.transaction.id])
+    await b.api.approveTransactions([item!.transaction.id])
+    await converge()
+    const given = (await a.api.listAllocations({ categoryId: groceries })).filter(
+      (x) => x.source === 'rule',
+    )
+    expect(given.map((x) => x.amount)).toEqual([20_000])
+  })
+
+  it('reverses once when both devices delete the same paycheck offline', async () => {
+    await a.api.importTransactions(paycheck)
+    await converge()
+    const [item] = await a.api.listInbox()
+    await a.api.approveTransactions([item!.transaction.id])
+    await converge()
+    await a.api.deleteTransaction(item!.transaction.id)
+    await b.api.deleteTransaction(item!.transaction.id)
+    await converge()
+    const given = (await a.api.listAllocations({ categoryId: groceries })).filter(
+      (x) => x.source === 'rule',
+    )
+    expect(given.reduce((sum, x) => sum + x.amount, 0)).toBe(0)
+  })
+
+  it('shares the rules and applies them on the other device', async () => {
+    expect((await b.api.listIncomeRules()).map((r) => r.name)).toEqual(['Tithe'])
+    await b.api.createTransaction({
+      accountId: checking,
+      date: '2026-10-25',
+      payee: 'Acme Payroll',
+      amount: 50_000,
+    })
+    await converge()
+    const given = (await a.api.listAllocations({ categoryId: groceries })).filter(
+      (x) => x.source === 'rule',
+    )
+    expect(given.map((x) => x.amount)).toEqual([5_000])
+  })
+})

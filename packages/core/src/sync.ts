@@ -19,6 +19,7 @@ export const SYNCED_TABLES: readonly string[] = [
   'external_accounts',
   'dismissed_imports',
   'payee_rules',
+  'income_rules',
   'investment_accounts',
   'account_valuations',
 ]

@@ -1,5 +1,6 @@
 import type { CrudDeps } from './crud.ts'
 import { flag } from './crud.ts'
+import { settleIncome } from './income-rules.ts'
 import { loadUsableRules, matchPayeeRule } from './payee-rules.ts'
 import { assertDate, loadTransactions, type Transaction } from './transactions.ts'
 import type { SqlRunner } from './storage.ts'
@@ -338,6 +339,8 @@ export function importsApi({ adapter, now, changes: log }: CrudDeps): ImportsApi
           if (!row) throw new Error('Transaction not found')
           await changes.update('transactions', id, { approved: flag(true) })
         }
+        // Income waits for approval before the income rules act on it.
+        await settleIncome(tx, changes, now(), ids)
       })
     },
 

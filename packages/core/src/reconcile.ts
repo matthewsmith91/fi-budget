@@ -1,8 +1,8 @@
 import { cents } from './money.ts'
-import type { CrudDeps } from './crud.ts'
+import { ADJUSTMENT_PAYEE, type CrudDeps } from './crud.ts'
 import { assertDate, loadTransactions, type Transaction } from './transactions.ts'
 
-export const ADJUSTMENT_PAYEE = 'Reconciliation Balance Adjustment'
+export { ADJUSTMENT_PAYEE }
 
 export interface ReconciliationStatus {
   accountId: string

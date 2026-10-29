@@ -10,7 +10,14 @@ async function setUpHousehold(page: Page, name = 'Smith') {
   await expect(sidebar(page).getByText(name, { exact: true })).toBeVisible()
 }
 
-const SETTINGS_SECTIONS = ['Household', 'Connections', 'Payee rules', 'Imports', 'Backups'] as const
+const SETTINGS_SECTIONS = [
+  'Household',
+  'Connections',
+  'Payee rules',
+  'Income rules',
+  'Imports',
+  'Backups',
+] as const
 
 /** Opens Settings from the budget sidebar, then one of its pages (the root page when none). */
 async function openSettings(page: Page, section?: (typeof SETTINGS_SECTIONS)[number]) {
@@ -846,4 +853,78 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   // the choice survives a reload
   await page.reload()
   await expect(page.getByRole('region', { name: 'Emergency fund' })).toContainText('Emergency Fund')
+})
+
+test('income rules: a paycheck feeds the tithe, and taking it back reverses that', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Account type').selectOption('checking')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Giving')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Giving' }).click()
+  await page.getByLabel('New category in Giving').fill('Tithe')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  // 10% of gross pay, before anything else
+  await openSettings(page, 'Income rules')
+  await page.getByLabel('Name', { exact: true }).fill('Tithe')
+  await page.getByLabel('Payee contains').fill('Acme Payroll')
+  await page.getByLabel('Percent', { exact: true }).fill('10')
+  await page.getByLabel('Net or gross').selectOption('gross')
+  await page.getByLabel('Envelope for the new rule').selectOption({ label: 'Tithe' })
+  await page.getByRole('button', { name: 'Add rule' }).click()
+  await expect(page.getByText('“Acme Payroll” → 10% of gross pay → Tithe')).toBeVisible()
+  await backToBudget(page)
+
+  // the paycheck, with its gross pay typed on it
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await page.getByLabel('Payee').fill('Acme Payroll')
+  await page.getByLabel('Inflow').fill('2411.37')
+  await page.getByLabel('Gross pay').fill('3100')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Acme Payroll/ })).toContainText('$2,411.37')
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  const ready = page.getByRole('status').filter({ hasText: 'Ready to Assign' })
+  await expect(page.getByRole('row', { name: /^Tithe/ })).toContainText('$310.00')
+  await expect(ready).toContainText('$2,101.37')
+
+  // the month check agrees with the ledger
+  await openSettings(page, 'Income rules')
+  const check = page.getByRole('region', { name: 'Check a month' })
+  await expect(check).toContainText('Acme Payroll')
+  await expect(check.getByRole('button', { name: /Apply the rules/ })).toHaveCount(0)
+  await backToBudget(page)
+
+  // the paycheck is reversed: an outflow that takes the deposit back
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await page.getByLabel('Payee').fill('Acme Payroll reversal')
+  await page.getByLabel('Outflow').fill('2411.37')
+  await page.getByLabel('Takes back the deposit').selectOption({ index: 1 })
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /reversal/ })).toContainText('$2,411.37')
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await expect(page.getByRole('row', { name: /^Tithe/ })).toContainText('$0.00')
+  await expect(page.getByRole('status').filter({ hasText: 'All money assigned' })).toBeVisible()
+
+  // the rule and its work survive a reload
+  await page.reload()
+  await expect(page.getByRole('row', { name: /^Tithe/ })).toContainText('$0.00')
 })

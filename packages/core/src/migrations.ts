@@ -313,6 +313,43 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE households DROP COLUMN emergency_fund_goal_id`,
     ],
   },
+  {
+    version: 15,
+    name: 'income-rules',
+    // A rule matches income (a payee's words and/or an account) and assigns a percent of it,
+    // or a fixed amount, to a category or goal, lowest priority first. `percent` may have up
+    // to three decimals. No check ties percent and fixed_amount together: two devices editing
+    // a rule offline could each win one column, and the engine skips a rule that has both or
+    // neither. An allocation a rule makes names the transaction and the rule behind it, so a
+    // refund or a deleted deposit can find and reverse it. `gross_amount` is the pre-tax pay
+    // typed on a deposit, for rules on a gross basis. `reverses_id` ties an outflow to the
+    // deposit it takes back.
+    up: [
+      `CREATE TABLE income_rules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        match TEXT,
+        account_id TEXT REFERENCES accounts(id),
+        basis TEXT NOT NULL DEFAULT 'net' CHECK (basis IN ('net', 'gross')),
+        percent REAL CHECK (percent IS NULL OR (percent > 0 AND percent <= 100)),
+        fixed_amount INTEGER CHECK (fixed_amount IS NULL OR fixed_amount > 0),
+        category_id TEXT NOT NULL REFERENCES categories(id),
+        goal_id TEXT REFERENCES goals(id),
+        priority INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX income_rules_category ON income_rules(category_id)`,
+      `ALTER TABLE allocations ADD COLUMN source_transaction_id TEXT`,
+      `ALTER TABLE allocations ADD COLUMN income_rule_id TEXT`,
+      `CREATE INDEX allocations_source_transaction ON allocations(source_transaction_id)
+         WHERE source_transaction_id IS NOT NULL`,
+      `ALTER TABLE transactions ADD COLUMN gross_amount INTEGER
+         CHECK (gross_amount IS NULL OR gross_amount > 0)`,
+      `ALTER TABLE transactions ADD COLUMN reverses_id TEXT`,
+      `CREATE INDEX transactions_reverses ON transactions(reverses_id) WHERE reverses_id IS NOT NULL`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

@@ -84,6 +84,15 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
   const goalName = new Map((goals.data ?? []).map((g) => [g.id, g.name] as const))
   const accountById = new Map(accounts.map((a) => [a.id, a]))
   const payees = [...new Set((transactions.data ?? []).flatMap((t) => (t.payee ? [t.payee] : [])))]
+  // Deposits an outflow can take back: income that landed in Ready to Assign.
+  const deposits = (transactions.data ?? []).filter(
+    (t) =>
+      t.amount > 0 &&
+      t.approved &&
+      !t.transferPairId &&
+      !t.reversesId &&
+      t.splits.every((s) => !s.categoryId),
+  )
 
   async function run(fn: () => Promise<unknown>) {
     setError(null)
@@ -187,6 +196,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                 groups={groups.data ?? []}
                 goals={goals.data ?? []}
                 payees={payees}
+                deposits={deposits}
                 onCancel={() => setEditing(null)}
                 onSave={(input) =>
                   run(() =>
@@ -195,6 +205,8 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                       date: input.date,
                       payee: input.payee,
                       splits: input.splits,
+                      grossAmount: input.grossAmount,
+                      reversesId: input.reversesId,
                     }),
                   ).then(() => undefined)
                 }
@@ -211,6 +223,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                   groups={groups.data ?? []}
                   goals={goals.data ?? []}
                   payees={payees}
+                  deposits={deposits}
                   onCancel={() => setEditing(null)}
                   transfer={transferInfo(t, accountById)}
                   onSave={async (input) => {
@@ -221,7 +234,13 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                           amount: input.splits[0]!.amount,
                           categoryId: input.splits[0]!.categoryId,
                         }
-                      : { date: input.date, payee: input.payee || null, splits: input.splits }
+                      : {
+                          date: input.date,
+                          payee: input.payee || null,
+                          splits: input.splits,
+                          grossAmount: input.grossAmount,
+                          reversesId: input.reversesId,
+                        }
                     await run(() => budget.updateTransaction(t.id, patch))
                     setEditing(null)
                   }}
@@ -383,6 +402,10 @@ interface Entry {
   date: string
   payee: string
   splits: SplitInput[]
+  /** Pre-tax pay of a deposit, for income rules on a gross basis; null clears it. */
+  grossAmount: number | null
+  /** The deposit this outflow takes back; null for none. */
+  reversesId: string | null
 }
 
 /** A split line as typed: a category and an amount in either the outflow or inflow box. */
@@ -433,6 +456,8 @@ function TransactionRow(props: {
   groups: CategoryGroup[]
   goals: Goal[]
   payees: string[]
+  /** Income that an outflow could take back (a reversed paycheck). */
+  deposits: Transaction[]
   onCancel: () => void
   onSave: (entry: Entry) => Promise<void>
   onDelete?: () => Promise<void>
@@ -445,6 +470,8 @@ function TransactionRow(props: {
   }))
   const [lines, setLines] = useState<Line[]>(() => (t ? t.splits.map(lineOf) : [emptyLine()]))
   const [split, setSplit] = useState(lines.length > 1)
+  const [gross, setGross] = useState(t?.grossAmount ? plain(t.grossAmount) : '')
+  const [reversesId, setReversesId] = useState(t?.reversesId ?? '')
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<typeof fields>) => setFields({ ...fields, ...patch })
   const setLine = (i: number, patch: Partial<Line>) =>
@@ -453,6 +480,17 @@ function TransactionRow(props: {
 
   const amounts = lines.map(amountOf)
   const total = amounts.reduce<number>((n, a) => n + (typeof a === 'number' ? a : 0), 0)
+  // Income rules look at uncategorized inflows, and a reversal is an outflow from the same account.
+  const isIncome = !props.transfer && account?.onBudget !== false && total > 0
+  const showGross = isIncome && lines.every((l) => !l.categoryId)
+  const reversible = props.deposits.filter(
+    (d) => d.accountId === fields.accountId && d.id !== t?.id,
+  )
+  const showReverses =
+    !props.transfer &&
+    account?.onBudget !== false &&
+    total < 0 &&
+    (reversible.length > 0 || !!reversesId)
 
   function toggleSplit() {
     setError(null)
@@ -492,12 +530,28 @@ function TransactionRow(props: {
         split ? 'Every split needs an outflow or an inflow' : 'Enter an outflow or an inflow',
       )
     }
+    let grossAmount: number | null = null
+    if (showGross && gross.trim() !== '') {
+      const parsed = parseCents(gross)
+      if (parsed === null || parsed <= 0)
+        return setError('Enter gross pay as dollars, like 3100.00')
+      grossAmount = parsed
+    }
     try {
-      await props.onSave({ accountId: fields.accountId, date, payee: fields.payee, splits })
+      await props.onSave({
+        accountId: fields.accountId,
+        date,
+        payee: fields.payee,
+        splits,
+        grossAmount,
+        reversesId: showReverses ? reversesId || null : null,
+      })
       if (!t) {
         setFields({ ...fields, payee: '' })
         setLines([emptyLine()])
         setSplit(false)
+        setGross('')
+        setReversesId('')
       }
     } catch (err) {
       setError(messageOf(err))
@@ -702,6 +756,35 @@ function TransactionRow(props: {
             <span className="error" role="alert">
               {error}
             </span>
+          )}
+          {showGross && (
+            <label className="inline-field">
+              Gross pay
+              <input
+                aria-label="Gross pay"
+                inputMode="decimal"
+                placeholder="optional"
+                value={gross}
+                onChange={(e) => setGross(e.target.value)}
+              />
+            </label>
+          )}
+          {showReverses && (
+            <label className="inline-field">
+              Takes back
+              <select
+                aria-label="Takes back the deposit"
+                value={reversesId}
+                onChange={(e) => setReversesId(e.target.value)}
+              >
+                <option value="">No deposit</option>
+                {reversible.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {`${shortDate(d.date)} ${d.payee ?? 'Deposit'} ${money(d.amount)}`}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
           <span className="spacer" />
           {props.onDelete && (

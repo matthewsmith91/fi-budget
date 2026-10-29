@@ -339,6 +339,11 @@ export function goalsApi({ adapter, newId, now, changes: log }: CrudDeps): Goals
           [id, id],
         )
         if (used) throw new Error('This goal has history; archive it instead of deleting')
+        const rules = await tx.query<{ id: string }>(
+          'SELECT id FROM income_rules WHERE goal_id = ?',
+          [id],
+        )
+        for (const rule of rules) await log(tx).delete('income_rules', rule.id)
         await log(tx).delete('goals', id)
       })
     },

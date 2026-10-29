@@ -28,3 +28,6 @@ export function assertSameIds(given: readonly string[], existing: readonly strin
     throw new Error(`Reorder must list every ${what} exactly once`)
   }
 }
+
+/** The payee on the adjustment a reconciliation posts, so income rules can leave it alone. */
+export const ADJUSTMENT_PAYEE = 'Reconciliation Balance Adjustment'

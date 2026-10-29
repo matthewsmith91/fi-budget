@@ -795,6 +795,23 @@ tr:focus-within .row-actions {
   margin: 0.4rem 0;
 }
 
+.edit-actions .inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0 0.8rem;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.edit-actions .inline-field input {
+  width: 7rem;
+}
+
+.edit-actions .inline-field select {
+  max-width: 16rem;
+}
+
 .split-line td {
   padding-top: 0;
 }
@@ -1030,6 +1047,12 @@ tr:focus-within .row-actions {
 
   .register.editing .edit-actions .spacer {
     flex: 1;
+  }
+
+  .register.editing .edit-actions .inline-field {
+    margin-left: 0;
+    flex-basis: 100%;
+    justify-content: space-between;
   }
 
   .register.editing .edit-actions button {

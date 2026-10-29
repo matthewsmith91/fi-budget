@@ -13,6 +13,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'household', label: 'Household' },
   { id: 'connections', label: 'Connections' },
   { id: 'payee-rules', label: 'Payee rules' },
+  { id: 'income-rules', label: 'Income rules' },
   { id: 'imports', label: 'Imports' },
   { id: 'backups', label: 'Backups' },
 ] as const

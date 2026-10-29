@@ -3,6 +3,7 @@ import type { ChangeLog } from './changes.ts'
 import { assertNeedOrWant, type NeedOrWant } from './categories.ts'
 import type { CrudDeps } from './crud.ts'
 import { flag } from './crud.ts'
+import { settleIncome } from './income-rules.ts'
 import { cents } from './money.ts'
 import type { SqlRunner } from './storage.ts'
 
@@ -35,6 +36,10 @@ export interface Transaction {
   transferPairId: string | null
   /** The account on the other leg of a transfer; null if this isn't one or the other leg is gone. */
   transferAccountId: string | null
+  /** Pre-tax pay typed on a deposit, for income rules on a gross basis; null when not given. */
+  grossAmount: number | null
+  /** The deposit this outflow takes back (a reversed paycheck); null otherwise. */
+  reversesId: string | null
   splits: TransactionSplit[]
 }
 
@@ -62,6 +67,10 @@ interface NewTransactionBase {
   date: string
   payee?: string
   cleared?: boolean
+  /** Pre-tax pay of a deposit; income rules on a gross basis take their percent of it. */
+  grossAmount?: number | null
+  /** Marks an outflow as taking back this deposit, which reverses what income rules gave it. */
+  reversesId?: string | null
 }
 
 export type NewTransaction = NewTransactionBase &
@@ -88,6 +97,10 @@ export interface TransactionPatch {
   date?: string
   payee?: string | null
   cleared?: boolean
+  /** Pre-tax pay of a deposit; null clears it. */
+  grossAmount?: number | null
+  /** Marks this outflow as taking back a deposit; null unlinks it. */
+  reversesId?: string | null
   /** Changes the single split; refused on a transaction with several. */
   categoryId?: string | null
   /**
@@ -156,6 +169,8 @@ interface TransactionRow {
   import_id: string | null
   transfer_pair_id: string | null
   transfer_account_id: string | null
+  gross_amount: number | null
+  reverses_id: string | null
 }
 
 interface SplitRow {
@@ -214,6 +229,33 @@ function assertSplits(splits: SplitInput[]): number {
 
 const cleanPayee = (payee: string | null | undefined) => payee?.trim() || null
 
+function assertGross(gross: number | null | undefined): void {
+  if (gross === null || gross === undefined) return
+  if (!Number.isSafeInteger(gross) || gross <= 0) {
+    throw new Error('Gross pay must be a positive whole number of cents')
+  }
+}
+
+/** An outflow can take back a deposit, as long as that deposit is not itself a reversal. */
+async function assertReversible(
+  db: SqlRunner,
+  outflowAmount: number,
+  targetId: string,
+  selfId: string,
+) {
+  if (outflowAmount >= 0) throw new Error('Only an outflow can reverse income')
+  if (targetId === selfId) throw new Error('A transaction can’t reverse itself')
+  const [target] = await db.query<{
+    amount: number
+    reverses_id: string | null
+    transfer_pair_id: string | null
+  }>('SELECT amount, reverses_id, transfer_pair_id FROM transactions WHERE id = ?', [targetId])
+  if (!target) throw new Error('The income to reverse was not found')
+  if (target.amount <= 0 || target.transfer_pair_id !== null || target.reverses_id !== null) {
+    throw new Error('Pick the deposit this takes back')
+  }
+}
+
 async function assertCategoryExists(db: SqlRunner, id: string) {
   const [row] = await db.query('SELECT 1 AS x FROM categories WHERE id = ?', [id])
   if (!row) throw new Error('Category not found')
@@ -255,7 +297,7 @@ export async function loadTransactions(
 ): Promise<Transaction[]> {
   const rows = await db.query<TransactionRow & Record<string, never>>(
     `SELECT id, account_id, date, payee, amount, cleared, reconciled, approved, import_id,
-       transfer_pair_id,
+       transfer_pair_id, gross_amount, reverses_id,
        (SELECT p.account_id FROM transactions p
          WHERE p.transfer_pair_id = t.transfer_pair_id AND p.id <> t.id) AS transfer_account_id
      FROM transactions t ${where} ORDER BY date DESC, created_at DESC, id DESC`,
@@ -292,6 +334,8 @@ export async function loadTransactions(
     importId: r.import_id,
     transferPairId: r.transfer_pair_id,
     transferAccountId: r.transfer_account_id,
+    grossAmount: r.gross_amount,
+    reversesId: r.reverses_id,
     splits: byTransaction.get(r.id) ?? [],
   }))
 }
@@ -381,7 +425,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     },
 
     async createTransaction(input) {
-      const { accountId, date, payee, cleared } = input
+      const { accountId, date, payee, cleared, grossAmount, reversesId } = input
       const lines: SplitInput[] = input.splits ?? [
         {
           categoryId: input.categoryId || null,
@@ -391,6 +435,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         },
       ]
       assertDate(date)
+      assertGross(grossAmount)
       if (input.splits) assertSplits(lines)
       else {
         assertAmount(input.amount)
@@ -408,6 +453,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         const id = newId()
         const at = now()
         const changes = log(tx)
+        if (reversesId) await assertReversible(tx, amount, reversesId, id)
         await changes.insert('transactions', {
           id,
           account_id: accountId,
@@ -416,6 +462,8 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           amount,
           cleared: flag(cleared ?? false),
           reconciled: 0,
+          gross_amount: grossAmount ?? null,
+          reverses_id: reversesId || null,
           created_at: at,
         })
         for (const line of lines) {
@@ -429,6 +477,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
             created_at: at,
           })
         }
+        await settleIncome(tx, changes, at, [id, reversesId])
         return get(tx, id)
       })
     },
@@ -497,6 +546,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
       if (patch.date !== undefined) assertDate(patch.date)
       if (patch.amount !== undefined) assertAmount(patch.amount)
       if (patch.needOrWant) assertNeedOrWant(patch.needOrWant)
+      assertGross(patch.grossAmount)
       if (patch.splits && (patch.categoryId !== undefined || patch.amount !== undefined)) {
         throw new Error('Change either the splits or the category and amount, not both')
       }
@@ -506,11 +556,16 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         if (current.reconciled) throw new Error('This transaction is reconciled and locked')
         if (current.transferPairId !== null) return updateLeg(tx, current, patch)
         const changes = log(tx)
+        const reversesId =
+          patch.reversesId === undefined ? current.reversesId : patch.reversesId || null
+        if (reversesId) await assertReversible(tx, amount ?? current.amount, reversesId, id)
         await changes.update('transactions', id, {
           date: patch.date ?? current.date,
           payee: patch.payee === undefined ? current.payee : cleanPayee(patch.payee),
           amount: amount ?? current.amount,
           cleared: flag(patch.cleared ?? current.cleared),
+          gross_amount: patch.grossAmount === undefined ? current.grossAmount : patch.grossAmount,
+          reverses_id: reversesId,
         })
         if (patch.splits) {
           await assertCategoriesExist(tx, patch.splits, goalsOf(current))
@@ -542,6 +597,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           for (const extra of current.splits.slice(patch.splits.length)) {
             await changes.delete('transaction_splits', extra.id)
           }
+          await settleIncome(tx, changes, now(), [id, current.reversesId, reversesId])
           return get(tx, id)
         }
         const touchesSplit =
@@ -582,6 +638,16 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
             amount: patch.amount ?? only.amount,
           })
         }
+        // Only what decides whether a deposit is income, and how much, can move rule allocations.
+        const touchesIncome =
+          touchesSplit ||
+          patch.date !== undefined ||
+          patch.payee !== undefined ||
+          patch.grossAmount !== undefined ||
+          patch.reversesId !== undefined
+        if (touchesIncome) {
+          await settleIncome(tx, changes, now(), [id, current.reversesId, reversesId])
+        }
         return get(tx, id)
       })
     },
@@ -600,6 +666,9 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           for (const split of gone.splits) await changes.delete('transaction_splits', split.id)
           await changes.delete('transactions', gone.id)
         }
+        // A deposit that is gone gives back what the rules assigned; a deleted reversal
+        // gives its deposit's share back.
+        await settleIncome(tx, changes, now(), [current.id, current.reversesId])
       })
     },
 
