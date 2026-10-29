@@ -172,7 +172,7 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
         {!inbox.loading && items.length === 0 && (
           <p className="empty">
             Nothing to review. The server checks your bank once a day; you can also fetch it from{' '}
-            <a href="#/settings">Settings</a>.
+            <a href="#/settings/connections">Settings</a>.
           </p>
         )}
       </div>

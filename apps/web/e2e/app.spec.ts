@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { readFile, writeFile } from 'node:fs/promises'
 
 const sidebar = (page: Page) => page.getByLabel('Budget navigation')
+const settingsSidebar = (page: Page) => page.getByLabel('Settings navigation')
 
 async function setUpHousehold(page: Page, name = 'Smith') {
   await page.getByLabel('Household name').fill(name)
@@ -9,9 +10,26 @@ async function setUpHousehold(page: Page, name = 'Smith') {
   await expect(sidebar(page).getByText(name, { exact: true })).toBeVisible()
 }
 
-async function openSettings(page: Page) {
+const SETTINGS_SECTIONS = ['Household', 'Connections', 'Payee rules', 'Imports', 'Backups'] as const
+
+/** Opens Settings from the budget sidebar, then one of its pages (the root page when none). */
+async function openSettings(page: Page, section?: (typeof SETTINGS_SECTIONS)[number]) {
   await sidebar(page).getByRole('link', { name: 'Settings' }).click()
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  if (section) await openSettingsPage(page, section)
+  await expect(
+    page.getByRole('heading', { name: section ?? 'Settings', exact: true }),
+  ).toBeVisible()
+}
+
+async function backToBudget(page: Page) {
+  await page.getByRole('link', { name: '← Back to budget' }).click()
+}
+
+async function openSettingsPage(page: Page, section: (typeof SETTINGS_SECTIONS)[number]) {
+  await page
+    .getByLabel('Settings navigation')
+    .getByRole('link', { name: section, exact: true })
+    .click()
 }
 
 async function exportAs(page: Page, button: 'Export JSON' | 'Export SQLite', path: string) {
@@ -55,9 +73,10 @@ test('data survives a reload and works offline from the service worker', async (
   ).toHaveText('yes', {
     timeout: 20_000,
   })
+  await backToBudget(page)
   await page.reload()
   await expect(sidebar(page).getByText('Smith', { exact: true })).toBeVisible()
-  await expect(sidebar(page).getByText('Matt & Jessica')).toBeVisible()
+  await expect(sidebar(page).getByText(/^(Matt & Jessica|Jessica & Matt)$/)).toBeVisible()
 
   await page.evaluate(() => navigator.serviceWorker.ready)
   await context.setOffline(true)
@@ -71,7 +90,7 @@ test('export then import restores a budget, with a safety backup of the replaced
 }, testInfo) => {
   await page.goto('/')
   await setUpHousehold(page)
-  await openSettings(page)
+  await openSettings(page, 'Backups')
 
   const jsonPath = testInfo.outputPath('budget.json')
   const sqlitePath = testInfo.outputPath('budget.sqlite')
@@ -91,18 +110,18 @@ test('export then import restores a budget, with a safety backup of the replaced
   const safety = page.waitForEvent('download')
   await page.getByLabel('Import a backup (JSON or SQLite)').setInputFiles(editedPath)
   expect((await safety).suggestedFilename()).toMatch(/^budget-before-import-.*\.sqlite$/)
-  await expect(sidebar(page).getByText('Jones', { exact: true })).toBeVisible()
+  await expect(settingsSidebar(page).getByText('Jones', { exact: true })).toBeVisible()
 
   // import the SQLite image: back to the original
   page.once('dialog', (d) => void d.accept())
   const safety2 = page.waitForEvent('download')
   await page.getByLabel('Import a backup (JSON or SQLite)').setInputFiles(sqlitePath)
   await safety2
-  await expect(sidebar(page).getByText(original, { exact: true })).toBeVisible()
+  await expect(settingsSidebar(page).getByText(original, { exact: true })).toBeVisible()
 
   // the swapped-in file is the one that persists
   await page.reload()
-  await expect(sidebar(page).getByText(original, { exact: true })).toBeVisible()
+  await expect(settingsSidebar(page).getByText(original, { exact: true })).toBeVisible()
 
   // a bad file is refused and nothing changes
   const junk = testInfo.outputPath('junk.json')
@@ -110,7 +129,7 @@ test('export then import restores a budget, with a safety backup of the replaced
   page.once('dialog', (d) => void d.accept())
   await page.getByLabel('Import a backup (JSON or SQLite)').setInputFiles(junk)
   await expect(page.getByRole('alert')).toContainText('Not a Budget-Fi export')
-  await expect(sidebar(page).getByText(original, { exact: true })).toBeVisible()
+  await expect(settingsSidebar(page).getByText(original, { exact: true })).toBeVisible()
 })
 
 test('a second tab is told the budget is open elsewhere', async ({ page, context }) => {
@@ -273,7 +292,7 @@ test('a transaction can be split across categories, on desktop and on a phone', 
   expect(payeeBox!.width).toBeGreaterThan(280)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
   await page.getByLabel('Payee').fill('Phone purchase')
-  await page.getByLabel('Category for the new rule').selectOption({ label: 'Groceries' })
+  await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Groceries' })
   await page.getByLabel('Outflow', { exact: true }).fill('5')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Phone purchase/ })).toContainText('$5.00')
@@ -318,7 +337,7 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await sidebar(page).getByRole('link', { name: /Visa/ }).click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Kroger')
-  await page.getByLabel('Category for the new rule').selectOption({ label: 'Groceries' })
+  await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Groceries' })
   await page.getByLabel('Outflow').fill('30')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Kroger/ })).toContainText('$30.00')
@@ -372,12 +391,12 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await expect(page.getByRole('alert').filter({ hasText: 'reconciled' })).toBeVisible()
 
   // the activity feed says who did what once the device is named
-  await openSettings(page)
+  await openSettings(page, 'Household')
   await page.getByLabel('Device name').fill('Test laptop')
   await page.getByLabel('Used by').selectOption({ label: 'Matt' })
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByText('Saved.')).toBeVisible()
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await backToBudget(page)
   await page.getByLabel('Assigned for Groceries').fill('120')
   await page.getByLabel('Assigned for Groceries').press('Enter')
   await sidebar(page).getByRole('link', { name: 'Activity' }).click()
@@ -410,7 +429,7 @@ test('imported transactions wait in the inbox until they are categorized and app
 
   // The bank fetch needs a real SimpleFIN account, so stand in for it: add what an import
   // writes (an unapproved, cleared transaction with the bank's id) to an exported budget.
-  await openSettings(page)
+  await openSettings(page, 'Backups')
   const jsonPath = testInfo.outputPath('budget.json')
   await exportAs(page, 'Export JSON', jsonPath)
   const exported = JSON.parse(await readFile(jsonPath, 'utf8'))
@@ -440,6 +459,7 @@ test('imported transactions wait in the inbox until they are categorized and app
   await page.getByLabel('Import a backup (JSON or SQLite)').setInputFiles(withImport)
   await safety
 
+  await backToBudget(page)
   await expect(sidebar(page).getByRole('link', { name: /Inbox/ })).toContainText('1')
   await sidebar(page).getByRole('link', { name: /Inbox/ }).click()
   const row = page.getByRole('row', { name: /KROGER #123/ })
@@ -482,7 +502,7 @@ test('YNAB history comes in from its export, and payee rules can use the new cat
 
   await page.goto('/')
   await setUpHousehold(page)
-  await openSettings(page)
+  await openSettings(page, 'Imports')
 
   await page.getByLabel('Register.csv').setInputFiles({
     name: 'Register.csv',
@@ -502,6 +522,7 @@ test('YNAB history comes in from its export, and payee rules can use the new cat
   await expect(page.getByText(/matches YNAB’s Budget\.csv/)).toBeVisible()
 
   // the history is in the ledger: balances, the category and its assignment
+  await backToBudget(page)
   await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /Groceries/ })).toBeVisible()
   await sidebar(page)
@@ -511,7 +532,7 @@ test('YNAB history comes in from its export, and payee rules can use the new cat
   await expect(sidebar(page)).toContainText('$2,379.50')
 
   // a second import is refused
-  await openSettings(page)
+  await openSettings(page, 'Imports')
   await page.getByLabel('Register.csv').setInputFiles({
     name: 'Register.csv',
     mimeType: 'text/csv',
@@ -524,6 +545,7 @@ test('YNAB history comes in from its export, and payee rules can use the new cat
   await expect(page.getByRole('alert')).toContainText('already been imported')
 
   // a payee rule onto an imported category
+  await openSettingsPage(page, 'Payee rules')
   await page.getByLabel('Payee contains').fill('Kroger')
   await page.getByLabel('Category for the new rule').selectOption({ label: 'Groceries' })
   await page.getByRole('button', { name: 'Add rule' }).click()

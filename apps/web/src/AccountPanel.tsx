@@ -2,7 +2,6 @@ import QRCode from 'qrcode'
 import { useEffect, useState } from 'react'
 import { authApi, pairingCodeFromHash, pairingLink, type Invite, type InviteKind } from './auth.ts'
 import { messageOf } from './errors.ts'
-import { BankPanel } from './BankPanel.tsx'
 import { useAsync } from './hooks.ts'
 import { SyncPanel } from './SyncPanel.tsx'
 
@@ -82,7 +81,8 @@ function SignedOut(props: { setupRequired: boolean; onChange: () => void }) {
             await authApi.pair(code, name.trim() || undefined)
             // Drop a spent code from the address bar, but leave any other address alone:
             // replaceState does not fire hashchange, so rewriting it would desync the route.
-            if (pairingCodeFromHash(location.hash)) history.replaceState(null, '', '#/settings')
+            if (pairingCodeFromHash(location.hash))
+              history.replaceState(null, '', '#/settings/household')
             props.onChange()
           })
         }}
@@ -156,7 +156,6 @@ function SignedIn(props: { name: string; onChange: () => void }) {
       </div>
       {invite && <InviteCard invite={invite} />}
       <SyncPanel />
-      <BankPanel />
       {error && (
         <p className="error" role="alert">
           {error}

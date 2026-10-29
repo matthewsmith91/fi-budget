@@ -107,7 +107,7 @@ export function SyncBanner() {
       data-sync={view.kind}
     >
       <span>{describe(view)}</span>
-      {view.kind === 'signin' && <a href="#/settings">Sign in</a>}
+      {view.kind === 'signin' && <a href="#/settings/household">Sign in</a>}
       {(view.kind === 'unsynced' || view.kind === 'error') && (
         <button onClick={() => void syncNow()}>Sync now</button>
       )}

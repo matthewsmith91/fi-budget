@@ -88,8 +88,8 @@ export function BankPanel() {
     })
 
   return (
-    <div className="stack">
-      <h3>Bank connections</h3>
+    <section className="card stack">
+      <h2>Bank connections</h2>
       <p className="muted">
         Connect your bank through SimpleFIN Bridge. The server holds the connection and neither
         device ever sees the bank login. Create a setup token in your SimpleFIN account and paste it
@@ -141,7 +141,7 @@ export function BankPanel() {
           {error ?? links.error?.message}
         </p>
       )}
-    </div>
+    </section>
   )
 }
 

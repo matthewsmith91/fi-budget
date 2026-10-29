@@ -1,5 +1,5 @@
 import type { Account, AccountBalance, Household } from '@budget-fi/core'
-import { hrefFor, type Route } from './route.ts'
+import { hrefFor, SETTINGS_SECTIONS, type Route } from './route.ts'
 import { money } from './format.ts'
 
 interface Props {
@@ -14,7 +14,56 @@ interface Props {
   onAddAccount: () => void
 }
 
-export function Sidebar({
+export function Sidebar(props: Props) {
+  return props.route.view === 'settings' ? (
+    <SettingsSidebar
+      household={props.household}
+      route={props.route}
+      open={props.open}
+      onNavigate={props.onNavigate}
+    />
+  ) : (
+    <BudgetSidebar {...props} />
+  )
+}
+
+/** Settings swaps the budget navigation for its own, with a way back. */
+function SettingsSidebar(props: {
+  household: Household | null
+  route: Extract<Route, { view: 'settings' }>
+  open: boolean
+  onNavigate: () => void
+}) {
+  const link = (href: string, label: string, active: boolean) => (
+    <a
+      href={href}
+      className={active ? 'nav-item active' : 'nav-item'}
+      aria-current={active ? 'page' : undefined}
+      onClick={props.onNavigate}
+    >
+      <span className="nav-label">{label}</span>
+    </a>
+  )
+
+  return (
+    <aside className={props.open ? 'sidebar open' : 'sidebar'} aria-label="Settings navigation">
+      <div className="sidebar-head">
+        <a href={hrefFor.budget} className="back-link" onClick={props.onNavigate}>
+          ← Back to budget
+        </a>
+        <span className="household-name">{props.household?.name ?? 'Household Budget'}</span>
+      </div>
+      <nav>
+        {link(hrefFor.settings, 'Settings', props.route.section === null)}
+        {SETTINGS_SECTIONS.map((s) =>
+          link(hrefFor.settingsSection(s.id), s.label, props.route.section === s.id),
+        )}
+      </nav>
+    </aside>
+  )
+}
+
+function BudgetSidebar({
   household,
   accounts,
   balances,

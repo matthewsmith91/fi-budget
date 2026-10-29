@@ -51,11 +51,11 @@ export const authApi = {
   createInvite: (kind: InviteKind) => call<Invite>('invites', { kind }),
 }
 
-/** The one-time code in a pairing link (`#/settings?code=ABCD-EFGH`), if the page was opened from one. */
+/** The one-time code in a pairing link (`#/settings/household?code=ABCD-EFGH`), if the page was opened from one. */
 export function pairingCodeFromHash(hash: string): string | null {
   return new URLSearchParams(hash.split('?')[1] ?? '').get('code')
 }
 
 export function pairingLink(code: string): string {
-  return `${location.origin}/#/settings?code=${encodeURIComponent(code)}`
+  return `${location.origin}/#/settings/household?code=${encodeURIComponent(code)}`
 }

@@ -45,7 +45,7 @@ export function SuggestPanel() {
       {status.loading && <p className="muted">Checking the server…</p>}
       {status.error && (
         <p className="muted">
-          Sign in to the household above, on a device that can reach the server, to set this up.
+          Sign in on the Household page, on a device that can reach the server, to set this up.
         </p>
       )}
       {current && (

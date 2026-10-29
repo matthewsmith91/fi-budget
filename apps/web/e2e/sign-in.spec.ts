@@ -63,7 +63,7 @@ async function blankDevice(browser: Browser): Promise<Page> {
   return page
 }
 
-async function newDevice(browser: Browser, path = '#/settings'): Promise<Page> {
+async function newDevice(browser: Browser, path = '#/settings/household'): Promise<Page> {
   const page = await blankDevice(browser)
   await page.goto(`${ORIGIN}/${path}`)
   // The budget file must exist before the shell shows Settings; the household is local to the device.
@@ -105,7 +105,7 @@ test('signs in and pairs devices and people, then syncs a new device from the se
 
   // A new device pairs with a one-time code and becomes the same person
   const deviceCode = await invite(laptop, 'Pair another device')
-  const phone = await newDevice(browser, `#/settings?code=${deviceCode}`)
+  const phone = await newDevice(browser, `#/settings/household?code=${deviceCode}`)
   await expect(phone.getByLabel('One-time code')).toHaveValue(deviceCode)
   await pair(phone, deviceCode)
   await expect(phone.getByText('Signed in as')).toContainText('Matt')
@@ -131,13 +131,11 @@ test('signs in and pairs devices and people, then syncs a new device from the se
     laptop.getByRole('status').filter({ hasText: 'full copy for new devices' }),
   ).toBeVisible()
   await expect(laptop.getByRole('button', { name: 'Sync now' })).toBeVisible()
-  // The bank section reaches the real /api/bank; nothing is linked, and no token is sent anywhere.
-  await expect(laptop.getByText('No bank is connected yet.')).toBeVisible()
-  await expect(laptop.getByRole('button', { name: 'Connect bank' })).toBeDisabled()
 
   // The status banner reports the device as synced; a change makes it unsynced until it is sent
   const banner = laptop.locator('[data-sync]')
   await expect(banner).toHaveAttribute('data-sync', 'synced')
+  await laptop.getByRole('link', { name: '← Back to budget' }).click()
   await laptop.context().setOffline(true)
   await laptop
     .getByLabel('Budget navigation')
@@ -151,6 +149,14 @@ test('signs in and pairs devices and people, then syncs a new device from the se
   await laptop.context().setOffline(false)
   await expect(banner).toHaveAttribute('data-sync', 'synced')
   await laptop.getByLabel('Budget navigation').getByRole('link', { name: 'Settings' }).click()
+  await laptop.getByLabel('Settings navigation').getByRole('link', { name: 'Household' }).click()
+
+  // Connections reaches the real /api/bank; nothing is linked, and no token is sent anywhere.
+  await laptop.getByLabel('Settings navigation').getByRole('link', { name: 'Connections' }).click()
+  await expect(laptop.getByText('No bank is connected yet.')).toBeVisible()
+  await expect(laptop.getByRole('button', { name: 'Connect bank' })).toBeDisabled()
+  await expect(laptop.getByRole('heading', { name: 'Category suggestions' })).toBeVisible()
+  await laptop.getByLabel('Settings navigation').getByRole('link', { name: 'Household' }).click()
 
   // A brand-new device with no budget pairs, then downloads the household from the server
   const newCode = await invite(laptop, 'Pair another device')
@@ -164,6 +170,7 @@ test('signs in and pairs devices and people, then syncs a new device from the se
     second.getByLabel('Budget navigation').getByText('Smith', { exact: true }),
   ).toBeVisible()
   await second.getByLabel('Budget navigation').getByRole('link', { name: 'Settings' }).click()
+  await second.getByLabel('Settings navigation').getByRole('link', { name: 'Household' }).click()
   await expect(second.getByRole('button', { name: 'Sync now' })).toBeVisible()
 
   // A device with a different budget of its own is not merged into the household's

@@ -285,6 +285,17 @@ main {
   font-size: 1.05rem;
 }
 
+.back-link {
+  color: var(--side-muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+  margin-bottom: 0.4rem;
+}
+
+.back-link:hover {
+  color: var(--side-fg);
+}
+
 .household-members {
   color: var(--side-muted);
   font-size: 0.85rem;
@@ -418,6 +429,10 @@ main {
   grid-template-columns: max-content 1fr;
   gap: 0.25rem 1rem;
   margin: 0;
+}
+
+.settings-link {
+  display: contents;
 }
 
 .card dt {

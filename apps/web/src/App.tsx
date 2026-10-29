@@ -57,6 +57,7 @@ function Shell() {
   } else if (route.view === 'settings') {
     content = (
       <SettingsView
+        section={route.section}
         persist={persist}
         offlineReady={sw.offlineReady}
         onBackupChanged={() => {
@@ -131,7 +132,8 @@ function Shell() {
             {backup.lastBackupAt
               ? `Your last backup was on ${new Date(backup.lastBackupAt).toLocaleDateString()}.`
               : 'This device has never been backed up.'}{' '}
-            This budget only exists on this device, so <a href="#/settings">export a backup</a>.
+            This budget only exists on this device, so{' '}
+            <a href="#/settings/backups">export a backup</a>.
           </div>
         )}
         {content}
