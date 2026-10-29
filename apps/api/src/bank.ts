@@ -15,6 +15,8 @@ import {
 export const KEY_FILE = 'bank.key'
 const KEY_BYTES = 32
 const DAY_SECONDS = 24 * 60 * 60
+/** The most queue rows one request hands out or takes back. */
+const QUEUE_PAGE = 2000
 
 /**
  * The key that seals bank access URLs. `BANK_KEY` (base64, 32 bytes) wins; otherwise a key
@@ -62,6 +64,11 @@ export interface BankLink {
   createdAt: string
   createdBy: string | null
   lastFetchedAt: string | null
+  /** When the daily pull last ran, and why it failed if it did. */
+  lastPullAt: string | null
+  pullError: string | null
+  /** Transactions fetched by the daily pull that no device has taken in yet. */
+  queued: number
 }
 
 interface LinkRow {
@@ -71,6 +78,9 @@ interface LinkRow {
   created_at: string
   created_by: string | null
   last_fetched_at: string | null
+  pull_run?: string | null
+  pull_error?: string | null
+  queued?: number
 }
 
 const toLink = (row: LinkRow): BankLink => ({
@@ -79,6 +89,9 @@ const toLink = (row: LinkRow): BankLink => ({
   createdAt: row.created_at,
   createdBy: row.created_by,
   lastFetchedAt: row.last_fetched_at,
+  lastPullAt: row.pull_run ?? null,
+  pullError: row.pull_error ?? null,
+  queued: row.queued ?? 0,
 })
 
 export interface BankDeps {
@@ -104,7 +117,14 @@ export function createBankRouter({ db, key, now = Date.now, fetch: fetchImpl }: 
   router.use(sessionMiddleware({ db, now }), requireUser)
 
   const rows = () =>
-    db.prepare('SELECT * FROM bank_links ORDER BY created_at, id').all() as unknown as LinkRow[]
+    db
+      .prepare(
+        `SELECT l.*, c.last_run AS pull_run, c.last_error AS pull_error,
+           (SELECT COUNT(*) FROM import_queue q WHERE q.link_id = l.id AND q.applied_at IS NULL) AS queued
+         FROM bank_links l LEFT JOIN sync_cursors c ON c.link_id = l.id
+         ORDER BY l.created_at, l.id`,
+      )
+      .all() as unknown as LinkRow[]
 
   router.get('/links', (_req, res) => {
     res.json({ links: rows().map(toLink) })
@@ -171,6 +191,78 @@ export function createBankRouter({ db, key, now = Date.now, fetch: fetchImpl }: 
       }
     }
     res.json({ results })
+  })
+
+  // What the daily pull has fetched and no device has taken in yet, grouped by bank account in
+  // the shape `importTransactions` takes. `ids` is what to hand back to /queue/applied.
+  router.get('/queue', (_req, res) => {
+    const waiting = db
+      .prepare(
+        `SELECT id, account_external_id, account_name, account_org, transaction_id, posted, amount, description
+         FROM import_queue WHERE applied_at IS NULL ORDER BY id LIMIT ?`,
+      )
+      .all(QUEUE_PAGE) as unknown as {
+      id: number
+      account_external_id: string
+      account_name: string
+      account_org: string
+      transaction_id: string
+      posted: string
+      amount: number
+      description: string
+    }[]
+    const accounts = new Map<
+      string,
+      {
+        id: string
+        name: string
+        org: string
+        transactions: { id: string; posted: string; amount: number; description: string }[]
+        queueIds: number[]
+      }
+    >()
+    for (const r of waiting) {
+      const account = accounts.get(r.account_external_id) ?? {
+        id: r.account_external_id,
+        name: r.account_name,
+        org: r.account_org,
+        transactions: [],
+        queueIds: [],
+      }
+      account.transactions.push({
+        id: r.transaction_id,
+        posted: r.posted,
+        amount: r.amount,
+        description: r.description,
+      })
+      account.queueIds.push(r.id)
+      accounts.set(r.account_external_id, account)
+    }
+    res.json({ accounts: [...accounts.values()] })
+  })
+
+  router.post('/queue/applied', (req, res) => {
+    const ids = (req.body as { ids?: unknown } | undefined)?.ids
+    if (
+      !Array.isArray(ids) ||
+      ids.length > QUEUE_PAGE ||
+      !ids.every((id) => Number.isSafeInteger(id))
+    ) {
+      throw new AuthError(400, 'ids must be a list of queue ids')
+    }
+    const mark = db.prepare(
+      'UPDATE import_queue SET applied_at = ? WHERE id = ? AND applied_at IS NULL',
+    )
+    const at = new Date(now()).toISOString()
+    db.exec('BEGIN')
+    try {
+      for (const id of ids as number[]) mark.run(at, id)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    res.status(204).end()
   })
 
   return router

@@ -5,6 +5,19 @@ export interface BankLink {
   provider: string
   createdAt: string
   lastFetchedAt: string | null
+  /** The server's daily pull: when it last ran, why it failed, and what is waiting for a device. */
+  lastPullAt: string | null
+  pullError: string | null
+  queued: number
+}
+
+/** What the daily pull has fetched, by bank account; `queueIds` go back to `markApplied`. */
+export interface QueuedAccount {
+  id: string
+  name: string
+  org: string
+  transactions: { id: string; posted: string; amount: number; description: string }[]
+  queueIds: number[]
 }
 
 /** Amounts are integer cents; negative is money out. */
@@ -28,6 +41,8 @@ export const bankApi = {
   link: (setupToken: string) => request<BankLink>('/api/bank/links', { setupToken }),
   unlink: (id: string) =>
     request<void>(`/api/bank/links/${encodeURIComponent(id)}`, undefined, 'DELETE'),
+  queue: async () => (await request<{ accounts: QueuedAccount[] }>('/api/bank/queue')).accounts,
+  markApplied: (ids: number[]) => request<void>('/api/bank/queue/applied', { ids }),
   /** Balances only: one cheap request, and SimpleFIN allows about 24 a day. */
   checkBalances: async (linkId: string) =>
     (await request<{ results: LinkFetch[] }>('/api/bank/fetch', { linkId, balancesOnly: true }))

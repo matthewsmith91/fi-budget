@@ -174,6 +174,7 @@ function LinkRow(props: {
           {link.lastFetchedAt && (
             <>, last checked {new Date(link.lastFetchedAt).toLocaleString()}</>
           )}
+          {link.queued > 0 && <>, {link.queued} new waiting to be brought in</>}
         </span>
         <button className="secondary" disabled={props.busy} onClick={props.onCheck}>
           Check balances
@@ -182,6 +183,11 @@ function LinkRow(props: {
           Disconnect
         </button>
       </div>
+      {link.pullError && (
+        <p className="error" role="alert">
+          The daily check failed: {link.pullError}
+        </p>
+      )}
       {check && !check.ok && (
         <p className="error" role="alert">
           {check.error}

@@ -1,15 +1,25 @@
+import { matchPayeeRule } from '@budget-fi/core'
 import type { Account, CategoryGroup, InboxItem, Transaction } from '@budget-fi/core'
 import { useState } from 'react'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
 import { money, shortDate } from './format.ts'
+import { useAsync } from './hooks.ts'
+import { ruleTextFor } from './rule-text.ts'
+import { suggestApi } from './suggest.ts'
+
+const MAX_SUGGEST = 50
 
 /** Transactions fetched from the bank that nobody has looked at yet. */
 export function InboxView({ accounts }: { accounts: Account[] }) {
   const refresh = useRefresh()
   const inbox = useBudgetQuery(() => budget.listInbox())
   const groups = useBudgetQuery(() => budget.listCategoryGroups())
+  const rules = useBudgetQuery(() => budget.listPayeeRules())
+  const suggestions = useAsync(() => suggestApi.enabled().catch(() => false))
+  const [suggested, setSuggested] = useState<Record<string, string>>({})
+  const [suggesting, setSuggesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const accountById = new Map(accounts.map((a) => [a.id, a]))
@@ -25,10 +35,65 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
     }
   }
 
+  const categoryNames = new Map(
+    (groups.data ?? []).flatMap((g) => g.categories.map((c) => [c.id, c.name])),
+  )
+
+  async function suggest() {
+    setError(null)
+    setSuggesting(true)
+    try {
+      const payees = [
+        ...new Set(
+          items.flatMap(({ transaction: t }) =>
+            t.payee && t.splits.length === 1 && !t.splits[0]!.categoryId ? [t.payee] : [],
+          ),
+        ),
+      ].slice(0, MAX_SUGGEST)
+      if (payees.length === 0) return
+      const categories = (groups.data ?? [])
+        .filter((g) => !g.hidden)
+        .flatMap((g) =>
+          g.categories
+            .filter((c) => !c.hidden && !c.creditCardAccountId)
+            .map((c) => ({ id: c.id, name: c.name, group: g.name })),
+        )
+      setSuggested(await suggestApi.categories(payees, categories))
+    } catch (err) {
+      setError(messageOf(err))
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
+  function remember(t: Transaction) {
+    const categoryId = t.splits[0]?.categoryId
+    if (!t.payee || !categoryId) return
+    const match = prompt(
+      `Put every payee containing these words in ${categoryNames.get(categoryId) ?? 'this category'}:`,
+      ruleTextFor(t.payee),
+    )?.trim()
+    if (!match) return
+    void run(async () => {
+      await budget.createPayeeRule({ match, categoryId })
+      await budget.applyPayeeRules()
+    })
+  }
+
   return (
     <div className="page">
       <header className="page-header">
         <h1>Inbox</h1>
+        {suggestions.data && (
+          <button
+            type="button"
+            className="secondary"
+            disabled={suggesting || items.length === 0}
+            onClick={() => void suggest()}
+          >
+            {suggesting ? 'Asking…' : 'Suggest categories'}
+          </button>
+        )}
         <button
           type="button"
           disabled={items.length === 0}
@@ -42,6 +107,8 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
       <p className="muted">
         New transactions from your bank. Pick a category, then approve. Anything you remove stays
         removed the next time the bank is fetched.
+        {suggestions.data &&
+          ' “Suggest categories” sends the payee names (nothing else) to Claude for a guess.'}
       </p>
 
       {error && (
@@ -79,6 +146,19 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
                 onCategory={(categoryId) =>
                   run(() => budget.updateTransaction(item.transaction.id, { categoryId }))
                 }
+                suggestion={
+                  item.transaction.payee
+                    ? categoryNames.get(suggested[item.transaction.payee] ?? '')
+                    : undefined
+                }
+                suggestionId={
+                  item.transaction.payee ? suggested[item.transaction.payee] : undefined
+                }
+                canRemember={
+                  item.transaction.payee !== null &&
+                  matchPayeeRule(rules.data ?? [], item.transaction.payee) === null
+                }
+                onRemember={() => remember(item.transaction)}
                 onApprove={() => run(() => budget.approveTransactions([item.transaction.id]))}
                 onRemove={() => {
                   if (!confirm('Remove this transaction? It won’t be imported again.')) return
@@ -91,7 +171,8 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
         </table>
         {!inbox.loading && items.length === 0 && (
           <p className="empty">
-            Nothing to review. Fetch your bank from <a href="#/settings">Settings</a>.
+            Nothing to review. The server checks your bank once a day; you can also fetch it from{' '}
+            <a href="#/settings">Settings</a>.
           </p>
         )}
       </div>
@@ -104,6 +185,12 @@ function InboxRow(props: {
   account: Account | undefined
   groups: CategoryGroup[]
   onCategory: (categoryId: string | null) => void
+  /** Claude's guess for this payee, by name and id, when it was asked and had one. */
+  suggestion: string | undefined
+  suggestionId: string | undefined
+  /** True when the payee has a category but no rule yet. */
+  canRemember: boolean
+  onRemember: () => void
   onApprove: () => void
   onRemove: () => void
   onMerge: (intoId: string) => void
@@ -149,6 +236,31 @@ function InboxRow(props: {
                   </optgroup>
                 ))}
             </select>
+          )}
+          {!categoryId && props.suggestion && props.suggestionId && !split && (
+            <div className="muted">
+              Suggested: {props.suggestion}{' '}
+              <button
+                type="button"
+                className="secondary"
+                aria-label={`Use the suggested category for ${label}`}
+                onClick={() => props.onCategory(props.suggestionId!)}
+              >
+                Use
+              </button>
+            </div>
+          )}
+          {categoryId && props.canRemember && !split && (
+            <div>
+              <button
+                type="button"
+                className="secondary"
+                aria-label={`Always use this category for ${label}`}
+                onClick={props.onRemember}
+              >
+                Always do this
+              </button>
+            </div>
           )}
         </td>
         <td className="num" data-label="Outflow">

@@ -115,6 +115,15 @@ describe('importing from the bank on two devices', () => {
     expect((await a.api.listInbox()).map((i) => i.transaction.importId)).toEqual(['ACT-1:T2'])
   })
 
+  it('uses a payee rule made on the other device', async () => {
+    await a.api.createPayeeRule({ match: 'kroger', categoryId: groceries })
+    await converge()
+    await b.api.importTransactions(data)
+    await converge()
+    const inbox = await a.api.listInbox()
+    expect(inbox.map((i) => i.transaction.splits[0]!.categoryId)).toEqual([groceries, null])
+  })
+
   it('keeps a dismissed transaction dismissed on both devices', async () => {
     await a.api.importTransactions(data)
     await converge()
@@ -123,6 +132,46 @@ describe('importing from the bank on two devices', () => {
     await converge()
     expect(await a.api.importTransactions(data)).toMatchObject({ added: 0, dismissed: 1 })
     expect(await a.api.listInbox()).toHaveLength(1)
+  })
+})
+
+describe('importing YNAB history', () => {
+  const register = [
+    'Account,Flag,Date,Payee,Category Group/Category,Category Group,Category,Memo,Outflow,Inflow,Cleared',
+    'Joint,,10/02/2026,Paycheck,Inflow: Ready to Assign,Inflow,Ready to Assign,,$0.00,"$2,000.00",Cleared',
+    'Joint,,10/15/2026,Costco,Household: Supplies,Household,Supplies,(Split 1/2) a,$30.00,$0.00,Cleared',
+    'Joint,,10/15/2026,Costco,Household: Pets,Household,Pets,(Split 2/2) b,$20.00,$0.00,Cleared',
+    'Joint,,10/16/2026,Transfer : Checking,,,,,$100.00,$0.00,Cleared',
+    'Checking,,10/16/2026,Transfer : Joint,,,,,$0.00,$100.00,Cleared',
+  ].join('\n')
+  const budget = [
+    'Month,Category Group/Category,Category Group,Category,Budgeted,Activity,Available',
+    'October 2026,Household: Supplies,Household,Supplies,$100.00,-$30.00,$70.00',
+  ].join('\n')
+
+  it('arrives whole on the other device', async () => {
+    const result = await a.api.importYnab({
+      register,
+      budget,
+      accounts: {
+        Joint: { create: { type: 'checking', onBudget: true } },
+        Checking: { accountId: checking },
+      },
+    })
+    expect(result.mismatchCount).toBe(0)
+    await converge()
+    expect(await b.api.listAccounts()).toHaveLength(3)
+    expect((await b.api.listTransactions()).filter((t) => t.id.startsWith('ynab-'))).toHaveLength(4)
+  })
+
+  it('is refused on the other device once it has arrived', async () => {
+    const accounts = {
+      Joint: { create: { type: 'checking', onBudget: true } },
+      Checking: { accountId: checking },
+    } as const
+    await a.api.importYnab({ register, accounts })
+    await converge()
+    await expect(b.api.importYnab({ register, accounts })).rejects.toThrow(/already been imported/)
   })
 })
 

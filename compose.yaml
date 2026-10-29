@@ -11,6 +11,9 @@ services:
     environment:
       # Passkeys are bound to this origin; the hostname becomes the passkey's relying-party ID.
       ORIGIN: https://${DOMAIN:?Set DOMAIN to the hostname that points at this machine}
+      # Optional fallback: the key can also be saved in Settings (which overrides this). Payee names
+      # (never amounts or accounts) go to Anthropic when someone asks the inbox for suggestions.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - data:/data
     # No published ports: only Caddy can reach the app.

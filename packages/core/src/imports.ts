@@ -1,5 +1,6 @@
 import type { CrudDeps } from './crud.ts'
 import { flag } from './crud.ts'
+import { loadUsableRules, matchPayeeRule } from './payee-rules.ts'
 import { assertDate, loadTransactions, type Transaction } from './transactions.ts'
 import type { SqlRunner } from './storage.ts'
 
@@ -64,9 +65,10 @@ export interface ImportsApi {
     accountId: string | null
   }): Promise<AccountMapping>
   /**
-   * Brings fetched bank transactions into the budget. Each one that is new becomes an
-   * uncategorized, cleared transaction in the inbox; one that matches a manual entry (same
-   * amount, within a few days) is folded into it instead of being added a second time.
+   * Brings fetched bank transactions into the budget. Each one that is new becomes a
+   * cleared transaction in the inbox, categorized by a payee rule if one fits; one that
+   * matches a manual entry (same amount, within a few days) is folded into it instead of
+   * being added a second time.
    * Running it again on the same data changes nothing.
    */
   importTransactions(accounts: ImportAccount[]): Promise<ImportSummary>
@@ -218,15 +220,20 @@ export function importsApi({ adapter, now, changes: log }: CrudDeps): ImportsApi
       return adapter.transaction(async (tx) => {
         const changes = log(tx)
         const at = now()
+        const rules = await loadUsableRules(tx)
         for (const external of accounts) {
           const link = await mapping(tx, external.id)
           let target: string | null = null
+          let budgeted = false
           if (link?.accountId) {
-            const [account] = await tx.query<{ closed: number }>(
-              'SELECT closed FROM accounts WHERE id = ?',
+            const [account] = await tx.query<{ closed: number; on_budget: number }>(
+              'SELECT closed, on_budget FROM accounts WHERE id = ?',
               [link.accountId],
             )
-            if (account && account.closed === 0) target = link.accountId
+            if (account && account.closed === 0) {
+              target = link.accountId
+              budgeted = account.on_budget === 1
+            }
           }
           if (target === null) {
             if (external.transactions.length > 0) {
@@ -289,10 +296,12 @@ export function importsApi({ adapter, now, changes: log }: CrudDeps): ImportsApi
               import_id: key,
               created_at: at,
             })
+            // A payee rule fills in the category; the transaction still waits for approval.
+            const rule = budgeted ? matchPayeeRule(rules, payee) : null
             await changes.insert('transaction_splits', {
               id: `${id}:split`,
               transaction_id: id,
-              category_id: null,
+              category_id: rule?.categoryId ?? null,
               amount: bank.amount,
               created_at: at,
             })

@@ -40,3 +40,12 @@ describe('loadConfig', () => {
     )
   })
 })
+
+describe('category suggestions', () => {
+  it('are off unless an Anthropic key is set', () => {
+    expect(loadConfig({}).anthropicApiKey).toBeNull()
+    expect(loadConfig({ ANTHROPIC_API_KEY: '' }).anthropicApiKey).toBeNull()
+    const on = loadConfig({ ANTHROPIC_API_KEY: 'sk-test', SUGGEST_MODEL: 'claude-haiku-5-5' })
+    expect(on).toMatchObject({ anthropicApiKey: 'sk-test', suggestModel: 'claude-haiku-5-5' })
+  })
+})

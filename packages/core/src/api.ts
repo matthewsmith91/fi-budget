@@ -7,6 +7,7 @@ import { categoriesApi, type CategoriesApi } from './categories.ts'
 import { newDeviceId } from './hlc.ts'
 import { importsApi, type ImportsApi } from './imports.ts'
 import { currentVersion } from './migrations.ts'
+import { payeeRulesApi, type PayeeRulesApi } from './payee-rules.ts'
 import { reconcileApi, type ReconcileApi } from './reconcile.ts'
 import type { SqlRunner, StorageAdapter } from './storage.ts'
 import {
@@ -18,6 +19,7 @@ import {
   type SyncTransport,
 } from './sync.ts'
 import { transactionsApi, type TransactionsApi } from './transactions.ts'
+import { ynabApi, type YnabApi } from './ynab.ts'
 
 export interface Household {
   id: string
@@ -46,7 +48,9 @@ export interface BudgetApi
     TransactionsApi,
     ReconcileApi,
     ActivityApi,
-    ImportsApi {
+    ImportsApi,
+    PayeeRulesApi,
+    YnabApi {
   getStatus(): Promise<AppStatus>
   getHousehold(): Promise<Household | null>
   createHousehold(input: { name: string; members: string[] }): Promise<Household>
@@ -113,6 +117,8 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...transactionsApi(crud),
     ...reconcileApi(crud),
     ...importsApi(crud),
+    ...payeeRulesApi(crud),
+    ...ynabApi(crud),
     ...activityApi({ ...crud, deviceId, mode: sync ? 'sync' : 'local' }),
     async getStatus() {
       return {

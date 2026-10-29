@@ -89,14 +89,14 @@ test('export then import restores a budget, with a safety backup of the replaced
   await writeFile(editedPath, JSON.stringify(exported))
   page.once('dialog', (d) => void d.accept())
   const safety = page.waitForEvent('download')
-  await page.locator('input[type=file]').setInputFiles(editedPath)
+  await page.getByLabel('Import a backup (JSON or SQLite)').setInputFiles(editedPath)
   expect((await safety).suggestedFilename()).toMatch(/^budget-before-import-.*\.sqlite$/)
   await expect(sidebar(page).getByText('Jones', { exact: true })).toBeVisible()
 
   // import the SQLite image: back to the original
   page.once('dialog', (d) => void d.accept())
   const safety2 = page.waitForEvent('download')
-  await page.locator('input[type=file]').setInputFiles(sqlitePath)
+  await page.getByLabel('Import a backup (JSON or SQLite)').setInputFiles(sqlitePath)
   await safety2
   await expect(sidebar(page).getByText(original, { exact: true })).toBeVisible()
 
@@ -108,7 +108,7 @@ test('export then import restores a budget, with a safety backup of the replaced
   const junk = testInfo.outputPath('junk.json')
   await writeFile(junk, '{"nope":true}')
   page.once('dialog', (d) => void d.accept())
-  await page.locator('input[type=file]').setInputFiles(junk)
+  await page.getByLabel('Import a backup (JSON or SQLite)').setInputFiles(junk)
   await expect(page.getByRole('alert')).toContainText('Not a Budget-Fi export')
   await expect(sidebar(page).getByText(original, { exact: true })).toBeVisible()
 })
@@ -273,7 +273,7 @@ test('a transaction can be split across categories, on desktop and on a phone', 
   expect(payeeBox!.width).toBeGreaterThan(280)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
   await page.getByLabel('Payee').fill('Phone purchase')
-  await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Groceries' })
+  await page.getByLabel('Category for the new rule').selectOption({ label: 'Groceries' })
   await page.getByLabel('Outflow', { exact: true }).fill('5')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Phone purchase/ })).toContainText('$5.00')
@@ -318,7 +318,7 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await sidebar(page).getByRole('link', { name: /Visa/ }).click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Kroger')
-  await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Groceries' })
+  await page.getByLabel('Category for the new rule').selectOption({ label: 'Groceries' })
   await page.getByLabel('Outflow').fill('30')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Kroger/ })).toContainText('$30.00')
@@ -437,7 +437,7 @@ test('imported transactions wait in the inbox until they are categorized and app
   await writeFile(withImport, JSON.stringify(exported))
   page.once('dialog', (d) => void d.accept())
   const safety = page.waitForEvent('download')
-  await page.locator('input[type=file]').setInputFiles(withImport)
+  await page.getByLabel('Import a backup (JSON or SQLite)').setInputFiles(withImport)
   await safety
 
   await expect(sidebar(page).getByRole('link', { name: /Inbox/ })).toContainText('1')
@@ -463,4 +463,72 @@ test('imported transactions wait in the inbox until they are categorized and app
   const approved = page.getByRole('row', { name: /KROGER #123/ })
   await expect(approved).toContainText('Groceries')
   await expect(approved).not.toContainText('New')
+})
+
+test('YNAB history comes in from its export, and payee rules can use the new categories', async ({
+  page,
+}) => {
+  const register = [
+    'Account,Flag,Date,Payee,Category Group/Category,Category Group,Category,Memo,Outflow,Inflow,Cleared',
+    'Checking,,10/01/2026,Starting Balance,Inflow: Ready to Assign,Inflow,Ready to Assign,,$0.00,"$3,000.00",Reconciled',
+    'Checking,,10/15/2026,Kroger,Food: Groceries,Food,Groceries,,$120.50,$0.00,Cleared',
+    'Checking,,10/16/2026,Transfer : Savings,,,,,$500.00,$0.00,Cleared',
+    'Savings,,10/16/2026,Transfer : Checking,,,,,$0.00,$500.00,Cleared',
+  ].join('\n')
+  const budget = [
+    'Month,Category Group/Category,Category Group,Category,Budgeted,Activity,Available',
+    'October 2026,Food: Groceries,Food,Groceries,$400.00,-$120.50,$279.50',
+  ].join('\n')
+
+  await page.goto('/')
+  await setUpHousehold(page)
+  await openSettings(page)
+
+  await page.getByLabel('Register.csv').setInputFiles({
+    name: 'Register.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(register),
+  })
+  await page.getByLabel('Budget.csv (optional)').setInputFiles({
+    name: 'Budget.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(budget),
+  })
+  await page.getByRole('button', { name: 'Read files' }).click()
+  await expect(page.getByText(/2 transactions.*1 transfer between/)).toBeVisible()
+  await expect(page.getByLabel('Type of the new Savings account')).toHaveValue('savings')
+  await page.getByRole('button', { name: 'Import', exact: true }).click()
+  await expect(page.getByText('Imported 2 transactions')).toBeVisible()
+  await expect(page.getByText(/matches YNAB’s Budget\.csv/)).toBeVisible()
+
+  // the history is in the ledger: balances, the category and its assignment
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await expect(page.getByRole('row', { name: /Groceries/ })).toBeVisible()
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await expect(page.getByRole('row', { name: /Kroger/ })).toContainText('$120.50')
+  await expect(sidebar(page)).toContainText('$2,379.50')
+
+  // a second import is refused
+  await openSettings(page)
+  await page.getByLabel('Register.csv').setInputFiles({
+    name: 'Register.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(register),
+  })
+  await page.getByRole('button', { name: 'Read files' }).click()
+  await page.getByLabel('Where Checking goes').selectOption({ label: 'Checking' })
+  await page.getByLabel('Where Savings goes').selectOption({ label: 'Savings' })
+  await page.getByRole('button', { name: 'Import', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('already been imported')
+
+  // a payee rule onto an imported category
+  await page.getByLabel('Payee contains').fill('Kroger')
+  await page.getByLabel('Category for the new rule').selectOption({ label: 'Groceries' })
+  await page.getByRole('button', { name: 'Add rule' }).click()
+  await expect(page.getByText('Kroger', { exact: true })).toBeVisible()
+  await expect(page.getByText('Food: Groceries')).toBeVisible()
+  await page.getByRole('button', { name: 'Delete the rule for Kroger' }).click()
+  await expect(page.getByText('No rules yet')).toBeVisible()
 })

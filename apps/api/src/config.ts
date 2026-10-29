@@ -10,6 +10,9 @@ export interface Config {
   origins: string[]
   /** The passkey relying-party ID: the hostname of the origins. */
   rpId: string
+  /** Optional: with a key, imported payees can be sent to Claude for a category suggestion. */
+  anthropicApiKey: string | null
+  suggestModel: string | null
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -30,6 +33,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     staticDir: resolve(env.STATIC_DIR || resolve(import.meta.dirname, '../../web/dist')),
     origins,
     rpId: [...hosts][0]!,
+    anthropicApiKey: env.ANTHROPIC_API_KEY || null,
+    suggestModel: env.SUGGEST_MODEL || null,
   }
 }
 

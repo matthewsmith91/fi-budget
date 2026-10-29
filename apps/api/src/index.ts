@@ -1,18 +1,22 @@
 import { createApp } from './app.ts'
 import { ensureSetupInvite } from './auth.ts'
 import { loadBankKey } from './bank.ts'
+import { startDailyPulls } from './pull.ts'
 import { loadConfig } from './config.ts'
 import { DB_FILE, openDatabase } from './db.ts'
 import { join } from 'node:path'
 
 const config = loadConfig()
+const key = loadBankKey(config.dataDir)
 const db = openDatabase(join(config.dataDir, DB_FILE))
 const app = createApp({
   db,
   staticDir: config.staticDir,
   auth: { rpId: config.rpId, origins: config.origins },
-  bank: { key: loadBankKey(config.dataDir) },
+  bank: { key },
+  suggest: { env: { apiKey: config.anthropicApiKey, model: config.suggestModel } },
 })
+const stopPulls = startDailyPulls({ db, key })
 
 // Until the first person registers there is nobody to hand out a pairing code, so print one.
 const setupCode = ensureSetupInvite(db, Date.now())
@@ -26,6 +30,7 @@ const server = app.listen(config.port, () => {
 
 // Docker sends SIGTERM; finish in-flight requests and close the database cleanly (WAL checkpoint).
 function shutdown() {
+  stopPulls()
   server.close(() => {
     db.close()
     process.exit(0)

@@ -78,7 +78,7 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 3,
     name: 'messages',
     // The change log: one row per field change, written in the same transaction as the
-    // change itself. \`value\` has no declared type so numbers and text keep their type.
+    // change itself. `value` has no declared type so numbers and text keep their type.
     // A delete is column '_deleted' with value 1.
     up: [
       `CREATE TABLE messages (
@@ -201,6 +201,23 @@ export const MIGRATIONS: readonly Migration[] = [
         created_by TEXT,
         created_at TEXT NOT NULL
       )`,
+    ],
+  },
+  {
+    version: 8,
+    name: 'payee-rules',
+    // A payee containing `match` (whole words, any case) is put in `category_id` when it is
+    // imported. No UNIQUE on match: two devices may add the same rule offline, and the API
+    // rejects the duplicates it can see.
+    up: [
+      `CREATE TABLE payee_rules (
+        id TEXT PRIMARY KEY,
+        match TEXT NOT NULL,
+        category_id TEXT NOT NULL REFERENCES categories(id),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX payee_rules_category ON payee_rules(category_id)`,
     ],
   },
 ]

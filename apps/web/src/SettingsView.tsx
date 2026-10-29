@@ -2,6 +2,9 @@ import { cents, formatCents } from '@budget-fi/core'
 import { AccountPanel } from './AccountPanel.tsx'
 import { BackupPanel } from './BackupPanel.tsx'
 import { DevicePanel } from './DevicePanel.tsx'
+import { PayeeRulesPanel } from './PayeeRulesPanel.tsx'
+import { SuggestPanel } from './SuggestPanel.tsx'
+import { YnabImportPanel } from './YnabImportPanel.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery } from './data.ts'
 import type { PersistState } from './hooks.ts'
@@ -42,6 +45,9 @@ export function SettingsView(props: {
       </section>
       <DevicePanel />
       <AccountPanel />
+      <PayeeRulesPanel />
+      <SuggestPanel />
+      <YnabImportPanel />
       <BackupPanel onChanged={props.onBackupChanged} />
     </div>
   )

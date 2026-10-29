@@ -232,12 +232,12 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 - [x] Sync status banner and unsynced-changes indicator
 - [x] Two-device test suite: same edits offline on both, converge after sync
 - [x] Bank-sync proxy: SimpleFIN token on the server, fetch on request
-- [ ] Daily server pull into the import queue, applied by the next device
+- [x] Daily server pull into the import queue, applied by the next device
 - [x] Map external accounts to app accounts
 - [x] De-duplicate imported against manual transactions
 - [x] Approval inbox for new transactions
-- [ ] Payee rules, then LLM category suggestions for unknown payees
-- [ ] One-time history import from YNAB
+- [x] Payee rules, then LLM category suggestions for unknown payees
+- [x] One-time history import from YNAB
 
 ### Phase 3 — Goals and rules
 

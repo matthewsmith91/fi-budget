@@ -7,6 +7,7 @@ import { createAuthRouter, sameOriginOnly } from './auth-routes.ts'
 import { createBankRouter } from './bank.ts'
 import { schemaVersion } from './db.ts'
 import type { Fetch } from './simplefin.ts'
+import { createSuggestRouter, type SuggestDeps } from './suggest.ts'
 import { createSyncRouter } from './sync.ts'
 
 export interface AppDeps {
@@ -16,6 +17,8 @@ export interface AppDeps {
   auth: { rpId: string; origins: string[]; now?: () => number }
   /** Seals bank credentials at rest; `fetch` is replaced in tests so they never reach SimpleFIN. */
   bank: { key: Buffer; fetch?: Fetch }
+  /** Category suggestions: the key can also come from the environment, and tests replace the network. */
+  suggest?: Pick<SuggestDeps, 'env' | 'make' | 'check'>
 }
 
 const apiErrors: ErrorRequestHandler = (error, _req, res, _next) => {
@@ -29,7 +32,7 @@ const apiErrors: ErrorRequestHandler = (error, _req, res, _next) => {
   }
 }
 
-export function createApp({ db, staticDir, auth, bank }: AppDeps): Express {
+export function createApp({ db, staticDir, auth, bank, suggest }: AppDeps): Express {
   const app = express()
   app.disable('x-powered-by')
   // A sync batch is bigger than the default body limit; this parser runs first and the
@@ -55,6 +58,7 @@ export function createApp({ db, staticDir, auth, bank }: AppDeps): Express {
 
   app.use('/api/sync', createSyncRouter({ db, now: auth.now }))
   app.use('/api/bank', createBankRouter({ db, now: auth.now, ...bank }))
+  app.use('/api/suggest', createSuggestRouter({ db, key: bank.key, now: auth.now, ...suggest }))
 
   // Everything under /api is server-owned; an unknown path must not fall through to the app shell.
   app.use('/api', (_req, res) => {

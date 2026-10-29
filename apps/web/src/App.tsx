@@ -8,6 +8,7 @@ import { useBudgetQuery, useRefresh } from './data.ts'
 import { DataProvider } from './DataProvider.tsx'
 import { getBackupState } from './device-settings.ts'
 import { InboxView } from './InboxView.tsx'
+import { QueueImporter } from './QueueImporter.tsx'
 import { usePersistentStorage, useServiceWorker } from './hooks.ts'
 import { RegisterView } from './RegisterView.tsx'
 import { useRoute } from './route.ts'
@@ -106,6 +107,7 @@ function Shell() {
       {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
 
       <main>
+        {household.data && <QueueImporter />}
         <SyncBanner />
         {sw.needRefresh && (
           <div className="banner" role="status">

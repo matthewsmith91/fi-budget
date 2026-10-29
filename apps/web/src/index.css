@@ -1120,3 +1120,9 @@ tr:focus-within .row-actions {
 .duplicate-row td {
   padding-top: 0;
 }
+
+ul.plain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}

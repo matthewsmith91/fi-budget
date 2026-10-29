@@ -70,6 +70,39 @@ export const MIGRATIONS: readonly string[] = [
     created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
     last_fetched_at TEXT
   );`,
+  // 5: the daily bank pull. `import_queue` holds fetched transactions until a device has
+  // brought them into the budget (`applied_at`); the unique key makes a re-fetched
+  // transaction a no-op. `sync_cursors` is per link: `cursor` is the last day a successful
+  // pull covered, `last_run` / `last_error` decide when to try again.
+  `CREATE TABLE import_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    link_id TEXT NOT NULL REFERENCES bank_links(id) ON DELETE CASCADE,
+    account_external_id TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    account_org TEXT NOT NULL,
+    transaction_id TEXT NOT NULL,
+    posted TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    applied_at TEXT,
+    UNIQUE (link_id, account_external_id, transaction_id)
+  );
+  CREATE INDEX import_queue_waiting ON import_queue(id) WHERE applied_at IS NULL;
+  CREATE TABLE sync_cursors (
+    link_id TEXT PRIMARY KEY REFERENCES bank_links(id) ON DELETE CASCADE,
+    cursor TEXT,
+    last_run TEXT NOT NULL,
+    last_error TEXT
+  );`,
+  // 6: server settings edited from the app. A value that is a credential is sealed with the
+  // server's bank key before it is stored (see bank.ts); the app never gets it back.
+  `CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
+  );`,
 ]
 
 export const DB_FILE = 'budget-fi.sqlite'
