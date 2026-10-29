@@ -323,3 +323,71 @@ describe('ready to assign', () => {
     expect(await api.getReadyToAssign('2026-01')).toBe(0)
   })
 })
+
+describe('need/want override on splits', () => {
+  it('stores an override per line and leaves the others following their category', async () => {
+    const { api, food, checking } = await makeApi()
+    const t = await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-01-05',
+      splits: [
+        { categoryId: food.id, amount: -8000 },
+        { categoryId: food.id, needOrWant: 'want', amount: -2500 },
+      ],
+    })
+    expect(t.splits.map((s) => s.needOrWant)).toEqual([null, 'want'])
+  })
+
+  it('replaces, clears and validates the override when splits change', async () => {
+    const { api, food, checking } = await makeApi()
+    const t = await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-01-05',
+      splits: [{ categoryId: food.id, needOrWant: 'want', amount: -2500 }],
+    })
+    const cleared = await api.updateTransaction(t.id, {
+      splits: [{ categoryId: food.id, amount: -2500 }],
+    })
+    expect(cleared.splits[0]!.needOrWant).toBeNull()
+    await expect(
+      api.updateTransaction(t.id, {
+        // @ts-expect-error not a tag
+        splits: [{ categoryId: food.id, needOrWant: 'maybe', amount: -2500 }],
+      }),
+    ).rejects.toThrow(/Unknown tag/)
+  })
+
+  it('sets the override on a single-line transaction and drops it with a category change', async () => {
+    const { api, food, rent, checking } = await makeApi()
+    const t = await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-01-05',
+      categoryId: food.id,
+      amount: -2500,
+    })
+    const tagged = await api.updateTransaction(t.id, { needOrWant: 'want' })
+    expect(tagged.splits[0]!.needOrWant).toBe('want')
+    // untouched by edits that don't change the category
+    expect((await api.updateTransaction(t.id, { amount: -3000 })).splits[0]!.needOrWant).toBe(
+      'want',
+    )
+    expect(
+      (await api.updateTransaction(t.id, { categoryId: rent.id })).splits[0]!.needOrWant,
+    ).toBeNull()
+    const again = await api.updateTransaction(t.id, { categoryId: food.id, needOrWant: 'need' })
+    expect(again.splits[0]!.needOrWant).toBe('need')
+    expect(
+      (await api.updateTransaction(t.id, { needOrWant: null })).splits[0]!.needOrWant,
+    ).toBeNull()
+  })
+
+  it('has no override on an uncategorized line', async () => {
+    const { api, checking } = await makeApi()
+    const t = await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-01-05',
+      splits: [{ categoryId: null, needOrWant: 'need', amount: 100 }],
+    })
+    expect(t.splits[0]!.needOrWant).toBeNull()
+  })
+})

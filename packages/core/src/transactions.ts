@@ -1,5 +1,6 @@
 import { assertGoalUsable } from './allocations.ts'
 import type { ChangeLog } from './changes.ts'
+import { assertNeedOrWant, type NeedOrWant } from './categories.ts'
 import type { CrudDeps } from './crud.ts'
 import { flag } from './crud.ts'
 import { cents } from './money.ts'
@@ -11,6 +12,8 @@ export interface TransactionSplit {
   categoryId: string | null
   /** The goal of that category this line is spent from, or null for the category itself. */
   goalId: string | null
+  /** Overrides the category's need/want tag for this line; null follows the category. */
+  needOrWant: NeedOrWant | null
   amount: number
 }
 
@@ -48,6 +51,8 @@ export interface SplitInput {
   categoryId: string | null
   /** A goal of `categoryId` to spend from; spending from a goal is a planned draw-down. */
   goalId?: string | null
+  /** Tags this line as a need or a want whatever its category says; null follows the category. */
+  needOrWant?: NeedOrWant | null
   /** Integer cents, signed like the transaction. */
   amount: number
 }
@@ -64,6 +69,7 @@ export type NewTransaction = NewTransactionBase &
     | {
         categoryId?: string | null
         goalId?: string | null
+        needOrWant?: NeedOrWant | null
         /** Integer cents; negative for spending, positive for income. */
         amount: number
         splits?: undefined
@@ -73,6 +79,7 @@ export type NewTransaction = NewTransactionBase &
         splits: SplitInput[]
         categoryId?: undefined
         goalId?: undefined
+        needOrWant?: undefined
         amount?: undefined
       }
   )
@@ -88,6 +95,11 @@ export interface TransactionPatch {
    * the new category is named here.
    */
   goalId?: string | null
+  /**
+   * Same restriction as `categoryId`. Changing the category drops the override unless one
+   * is named here.
+   */
+  needOrWant?: NeedOrWant | null
   /** Same restriction as `categoryId`. */
   amount?: number
   /** Replaces every split, and the amount with their sum. Not combinable with `categoryId` or `amount`. */
@@ -151,6 +163,7 @@ interface SplitRow {
   transaction_id: string
   category_id: string | null
   goal_id: string | null
+  need_or_want_override: NeedOrWant | null
   amount: number
 }
 
@@ -193,6 +206,7 @@ function assertSplits(splits: SplitInput[]): number {
     }
     if (split.amount === 0) throw new Error('Each split needs an amount')
     total += split.amount
+    if (split.needOrWant) assertNeedOrWant(split.needOrWant)
   }
   assertAmount(total)
   return total
@@ -249,14 +263,21 @@ export async function loadTransactions(
   )
   if (rows.length === 0) return []
   const splits = await db.query<SplitRow & Record<string, never>>(
-    `SELECT s.id, s.transaction_id, s.category_id, s.goal_id, s.amount FROM transaction_splits s
+    `SELECT s.id, s.transaction_id, s.category_id, s.goal_id, s.need_or_want_override, s.amount
+     FROM transaction_splits s
      JOIN transactions t ON t.id = s.transaction_id ${where} ORDER BY s.rowid`,
     params,
   )
   const byTransaction = new Map<string, TransactionSplit[]>()
   for (const s of splits) {
     const list = byTransaction.get(s.transaction_id) ?? []
-    list.push({ id: s.id, categoryId: s.category_id, goalId: s.goal_id, amount: s.amount })
+    list.push({
+      id: s.id,
+      categoryId: s.category_id,
+      goalId: s.goal_id,
+      needOrWant: s.need_or_want_override,
+      amount: s.amount,
+    })
     byTransaction.set(s.transaction_id, list)
   }
   return rows.map((r) => ({
@@ -362,11 +383,19 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     async createTransaction(input) {
       const { accountId, date, payee, cleared } = input
       const lines: SplitInput[] = input.splits ?? [
-        { categoryId: input.categoryId || null, goalId: input.goalId, amount: input.amount },
+        {
+          categoryId: input.categoryId || null,
+          goalId: input.goalId,
+          needOrWant: input.needOrWant,
+          amount: input.amount,
+        },
       ]
       assertDate(date)
       if (input.splits) assertSplits(lines)
-      else assertAmount(input.amount)
+      else {
+        assertAmount(input.amount)
+        if (input.needOrWant) assertNeedOrWant(input.needOrWant)
+      }
       const amount = lines.reduce((sum, line) => sum + line.amount, 0)
       return adapter.transaction(async (tx) => {
         const [account] = await tx.query<{ closed: number }>(
@@ -395,6 +424,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
             transaction_id: id,
             category_id: line.categoryId || null,
             goal_id: line.categoryId ? line.goalId || null : null,
+            need_or_want_override: line.categoryId ? line.needOrWant || null : null,
             amount: line.amount,
             created_at: at,
           })
@@ -466,6 +496,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     async updateTransaction(id, patch) {
       if (patch.date !== undefined) assertDate(patch.date)
       if (patch.amount !== undefined) assertAmount(patch.amount)
+      if (patch.needOrWant) assertNeedOrWant(patch.needOrWant)
       if (patch.splits && (patch.categoryId !== undefined || patch.amount !== undefined)) {
         throw new Error('Change either the splits or the category and amount, not both')
       }
@@ -488,10 +519,12 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           for (const [i, line] of patch.splits.entries()) {
             const existing = current.splits[i]
             const goalId = line.categoryId ? line.goalId || null : null
+            const needOrWant = line.categoryId ? line.needOrWant || null : null
             if (existing) {
               await changes.update('transaction_splits', existing.id, {
                 category_id: line.categoryId || null,
                 goal_id: goalId,
+                need_or_want_override: needOrWant,
                 amount: line.amount,
               })
             } else {
@@ -500,6 +533,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
                 transaction_id: id,
                 category_id: line.categoryId || null,
                 goal_id: goalId,
+                need_or_want_override: needOrWant,
                 amount: line.amount,
                 created_at: at,
               })
@@ -511,7 +545,10 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           return get(tx, id)
         }
         const touchesSplit =
-          patch.categoryId !== undefined || patch.goalId !== undefined || patch.amount !== undefined
+          patch.categoryId !== undefined ||
+          patch.goalId !== undefined ||
+          patch.needOrWant !== undefined ||
+          patch.amount !== undefined
         if (touchesSplit) {
           const [only, ...rest] = current.splits
           if (!only || rest.length > 0) {
@@ -531,9 +568,17 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
                 ? only.goalId
                 : null
           if (goalId) await assertGoalUsable(tx, goalId, categoryId, goalsOf(current))
+          // Like the goal, the override stays only while the category does.
+          const needOrWant =
+            patch.needOrWant !== undefined
+              ? patch.needOrWant || null
+              : categoryId === only.categoryId
+                ? only.needOrWant
+                : null
           await changes.update('transaction_splits', only.id, {
             category_id: categoryId,
             goal_id: categoryId ? goalId : null,
+            need_or_want_override: categoryId ? needOrWant : null,
             amount: patch.amount ?? only.amount,
           })
         }

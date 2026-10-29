@@ -142,7 +142,7 @@ async function assertCategoryNameFree(
   if (dup) throw new Error(`This group already has a category named "${name}"`)
 }
 
-function assertNeedOrWant(value: string) {
+export function assertNeedOrWant(value: string) {
   if (!NEED_OR_WANT.includes(value as NeedOrWant)) throw new Error(`Unknown tag "${value}"`)
 }
 
@@ -346,6 +346,14 @@ export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): 
           id,
         ])
         for (const goal of goals) await changes.delete('goals', goal.id)
+        // The household's emergency fund can't point at a category that is gone.
+        const funds = await tx.query<{ id: string }>(
+          'SELECT id FROM households WHERE emergency_fund_category_id = ?',
+          [id],
+        )
+        for (const h of funds) {
+          await changes.update('households', h.id, { emergency_fund_category_id: null })
+        }
         await changes.delete('categories', id)
       })
     },

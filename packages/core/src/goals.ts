@@ -15,6 +15,8 @@ export interface Goal {
   targetDate: string | null
   /** An archived goal keeps its history but takes no more money or spending. */
   archived: boolean
+  /** The budget account this goal's money sits in, or null if it isn't tied to one. */
+  heldInAccountId: string | null
 }
 
 /**
@@ -44,6 +46,22 @@ export interface GoalBalance {
   underfunded: number
 }
 
+/**
+ * What the goals held in one account add up to against what the account has. The goals'
+ * balances are envelope money; if they total more than the account, some of it isn't there.
+ */
+export interface AccountHolding {
+  accountId: string
+  /** The account's balance through the end of the month, from every transaction in it. */
+  balance: number
+  /** The sum of the balances of the goals held in it, counting only goals that hold money. */
+  held: number
+  /** How much `held` exceeds `balance`; 0 when the account covers its goals. */
+  over: number
+  /** Each goal held in the account, with what it holds (negative if it is overspent). */
+  goals: { goalId: string; amount: number }[]
+}
+
 export interface GoalsApi {
   /** Every goal, archived ones included, oldest first. */
   listGoals(): Promise<Goal[]>
@@ -52,10 +70,17 @@ export interface GoalsApi {
     name: string
     targetAmount: number
     targetDate?: string | null
+    /** A budget account (not a credit card) that holds the goal's money. */
+    heldInAccountId?: string | null
   }): Promise<Goal>
   updateGoal(
     id: string,
-    changes: { name?: string; targetAmount?: number; targetDate?: string | null },
+    changes: {
+      name?: string
+      targetAmount?: number
+      targetDate?: string | null
+      heldInAccountId?: string | null
+    },
   ): Promise<Goal>
   /**
    * Retires a goal. Whatever it still holds (or owes) returns to its category's unassigned
@@ -67,6 +92,12 @@ export interface GoalsApi {
   deleteGoal(id: string): Promise<void>
   /** Every goal's balance and progress as of `month`. */
   getGoalBalances(month: Month): Promise<GoalBalance[]>
+  /**
+   * For every account that has goals held in it, how much those goals hold against the
+   * account's balance, as of the end of `month`. Accounts with no goals are left out.
+   * An entry with `over` above zero is the over-allocation warning.
+   */
+  getAccountHoldings(month: Month): Promise<AccountHolding[]>
 }
 
 interface GoalRow {
@@ -76,9 +107,11 @@ interface GoalRow {
   target_amount: number
   target_date: string | null
   archived: number
+  held_in_account_id: string | null
 }
 
-const GOAL_SELECT = 'SELECT id, category_id, name, target_amount, target_date, archived FROM goals'
+const GOAL_SELECT =
+  'SELECT id, category_id, name, target_amount, target_date, archived, held_in_account_id FROM goals'
 
 const toGoal = (r: GoalRow): Goal => ({
   id: r.id,
@@ -87,6 +120,7 @@ const toGoal = (r: GoalRow): Goal => ({
   targetAmount: r.target_amount,
   targetDate: r.target_date,
   archived: r.archived === 1,
+  heldInAccountId: r.held_in_account_id,
 })
 
 async function getGoal(db: SqlRunner, id: string): Promise<Goal> {
@@ -102,6 +136,19 @@ function assertTarget(amount: number) {
     throw new Error('Target must be a whole number of cents')
   }
   if (amount <= 0) throw new Error('Target must be more than zero')
+}
+
+/** Only a budget account that isn't a credit card can hold savings. */
+async function assertCanHold(db: SqlRunner, accountId: string) {
+  const [account] = await db.query<{ type: string; on_budget: number; closed: number }>(
+    'SELECT type, on_budget, closed FROM accounts WHERE id = ?',
+    [accountId],
+  )
+  if (!account) throw new Error('Account not found')
+  if (account.type === 'credit' || account.on_budget !== 1) {
+    throw new Error('A goal can only be held in a budget account that isn’t a credit card')
+  }
+  if (account.closed === 1) throw new Error('That account is closed')
 }
 
 async function assertNameFree(db: SqlRunner, categoryId: string, name: string, exceptId = '') {
@@ -185,7 +232,7 @@ export function goalsApi({ adapter, newId, now, changes: log }: CrudDeps): Goals
       return rows.map(toGoal)
     },
 
-    async createGoal({ categoryId, name, targetAmount, targetDate }) {
+    async createGoal({ categoryId, name, targetAmount, targetDate, heldInAccountId }) {
       const clean = cleanName(name, 'Goal')
       assertTarget(targetAmount)
       if (targetDate) assertDate(targetDate)
@@ -199,6 +246,7 @@ export function goalsApi({ adapter, newId, now, changes: log }: CrudDeps): Goals
           throw new Error('A credit card payment category can’t hold goals')
         }
         await assertNameFree(tx, categoryId, clean)
+        if (heldInAccountId) await assertCanHold(tx, heldInAccountId)
         const id = newId()
         await log(tx).insert('goals', {
           id,
@@ -207,6 +255,7 @@ export function goalsApi({ adapter, newId, now, changes: log }: CrudDeps): Goals
           target_amount: targetAmount,
           target_date: targetDate || null,
           archived: 0,
+          held_in_account_id: heldInAccountId || null,
           created_at: now(),
         })
         return getGoal(tx, id)
@@ -222,11 +271,18 @@ export function goalsApi({ adapter, newId, now, changes: log }: CrudDeps): Goals
         if (name !== current.name && !current.archived) {
           await assertNameFree(tx, current.categoryId, name, id)
         }
+        const heldIn =
+          patch.heldInAccountId === undefined
+            ? current.heldInAccountId
+            : patch.heldInAccountId || null
+        // Keeping the account it already has is always fine, even if that account has closed since.
+        if (heldIn && heldIn !== current.heldInAccountId) await assertCanHold(tx, heldIn)
         await log(tx).update('goals', id, {
           name,
           target_amount: patch.targetAmount ?? current.targetAmount,
           target_date:
             patch.targetDate === undefined ? current.targetDate : patch.targetDate || null,
+          held_in_account_id: heldIn,
         })
         return getGoal(tx, id)
       })
@@ -284,6 +340,42 @@ export function goalsApi({ adapter, newId, now, changes: log }: CrudDeps): Goals
         )
         if (used) throw new Error('This goal has history; archive it instead of deleting')
         await log(tx).delete('goals', id)
+      })
+    },
+
+    async getAccountHoldings(month) {
+      assertMonth(month)
+      return adapter.transaction(async (tx) => {
+        const goals = await tx.query<{ id: string; account_id: string }>(
+          `SELECT id, held_in_account_id AS account_id FROM goals
+           WHERE held_in_account_id IS NOT NULL ORDER BY created_at, id`,
+        )
+        if (goals.length === 0) return []
+        const figures = await goalFigures(tx, month)
+        const balances = await tx.query<{ account_id: string; balance: number }>(
+          `SELECT account_id, SUM(amount) AS balance FROM transactions
+           WHERE substr(date, 1, 7) <= ? GROUP BY account_id`,
+          [month],
+        )
+        const balanceOf = new Map(balances.map((b) => [b.account_id, b.balance]))
+        const byAccount = new Map<string, AccountHolding>()
+        for (const g of goals) {
+          const amount = figures.get(g.id)?.available ?? 0
+          const entry = byAccount.get(g.account_id) ?? {
+            accountId: g.account_id,
+            balance: balanceOf.get(g.account_id) ?? 0,
+            held: 0,
+            over: 0,
+            goals: [],
+          }
+          byAccount.set(g.account_id, entry)
+          entry.goals.push({ goalId: g.id, amount })
+          entry.held += Math.max(amount, 0)
+        }
+        return [...byAccount.values()].map((h) => ({
+          ...h,
+          over: Math.max(h.held - Math.max(h.balance, 0), 0),
+        }))
       })
     },
 

@@ -243,10 +243,10 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 
 - [x] Goals under categories: create, fund, spend from, archive
 - [x] Monthly amount needed and percent funded per goal
-- [ ] "Held in" account and the over-allocation warning
-- [ ] Need/want tag on categories, with override on splits
-- [ ] Needs vs wants report with trailing averages
-- [ ] Emergency fund target from average Need spending; months covered today
+- [x] "Held in" account and the over-allocation warning
+- [x] Need/want tag on categories, with override on splits
+- [x] Needs vs wants report with trailing averages
+- [x] Emergency fund target from average Need spending; months covered today
 - [ ] Income rules engine: match, priority, percent or fixed, net or gross basis
 - [ ] Rule reversal on refunded or reversed income
 - [ ] Tithe rule set up and verified against a real month

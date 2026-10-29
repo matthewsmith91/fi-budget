@@ -1187,3 +1187,27 @@ ul.plain {
 .goal-form input {
   min-width: 9rem;
 }
+
+/* ---------- need / want ---------- */
+
+.tag.need-want {
+  margin-left: 0.5rem;
+  color: var(--muted);
+}
+
+.need-want-select {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.card dl.fund-figures {
+  margin-bottom: 0.75rem;
+}
+
+.card form.inline label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}

@@ -1,4 +1,11 @@
-import { cents, formatCents, parseCents, type Goal, type GoalBalance } from '@budget-fi/core'
+import {
+  cents,
+  formatCents,
+  parseCents,
+  type Account,
+  type Goal,
+  type GoalBalance,
+} from '@budget-fi/core'
 import { useState, type FormEvent } from 'react'
 import { AssignedInput } from './AssignedInput.tsx'
 import { budget } from './client.ts'
@@ -14,10 +21,12 @@ const tone = (available: number) => (available < 0 ? 'bad' : available === 0 ? '
 export function GoalForm(props: {
   label: string
   goal?: Goal
+  accounts: Account[]
   onSubmit: (input: {
     name: string
     targetAmount: number
     targetDate: string | null
+    heldInAccountId: string | null
   }) => Promise<void>
   onDone: () => void
 }) {
@@ -27,6 +36,11 @@ export function GoalForm(props: {
     goal ? formatCents(cents(goal.targetAmount), { symbol: false }) : '',
   )
   const [date, setDate] = useState(goal?.targetDate ?? '')
+  const [heldIn, setHeldIn] = useState(goal?.heldInAccountId ?? '')
+  // Only an open budget account can hold savings; a goal keeps the one it already has.
+  const holders = props.accounts.filter(
+    (a) => a.id === goal?.heldInAccountId || (a.onBudget && a.type !== 'credit' && !a.closed),
+  )
   const [error, setError] = useState<string | null>(null)
 
   async function submit(e: FormEvent) {
@@ -36,7 +50,12 @@ export function GoalForm(props: {
       return setError('Enter the target as dollars, like 1200.00')
     }
     setError(null)
-    await props.onSubmit({ name, targetAmount, targetDate: date || null })
+    await props.onSubmit({
+      name,
+      targetAmount,
+      targetDate: date || null,
+      heldInAccountId: heldIn || null,
+    })
     props.onDone()
   }
 
@@ -69,6 +88,18 @@ export function GoalForm(props: {
         value={date}
         onChange={(e) => setDate(e.target.value)}
       />
+      <select
+        aria-label="Held in account (optional)"
+        value={heldIn}
+        onChange={(e) => setHeldIn(e.target.value)}
+      >
+        <option value="">Not held in an account</option>
+        {holders.map((a) => (
+          <option key={a.id} value={a.id}>
+            Held in {a.name}
+          </option>
+        ))}
+      </select>
       <button type="submit">{goal ? 'Save' : 'Add goal'}</button>
       <button type="button" className="secondary" onClick={props.onDone}>
         Cancel
@@ -85,6 +116,7 @@ export function GoalForm(props: {
 /** The rows of one category's goals, to sit right under the category's own row. */
 export function GoalRows(props: {
   goals: Goal[]
+  accounts: Account[]
   balances: GoalBalance[]
   month: string
   editing: string | null
@@ -102,6 +134,7 @@ export function GoalRows(props: {
             <GoalForm
               label={`Edit goal ${goal.name}`}
               goal={goal}
+              accounts={props.accounts}
               onSubmit={(input) => run(() => budget.updateGoal(goal.id, input))}
               onDone={() => props.onEdit(null)}
             />
@@ -118,7 +151,13 @@ export function GoalRows(props: {
                 {goal.name}
                 {goal.archived && <span className="tag">Archived</span>}
               </span>
-              <span className="goal-status muted">{goalStatus(goal, b).join(' · ')}</span>
+              <span className="goal-status muted">
+                {goalStatus(
+                  goal,
+                  b,
+                  props.accounts.find((a) => a.id === goal.heldInAccountId)?.name,
+                ).join(' · ')}
+              </span>
               <span
                 className="goal-bar"
                 role="progressbar"

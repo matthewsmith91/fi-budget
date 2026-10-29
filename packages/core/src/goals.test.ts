@@ -101,6 +101,7 @@ describe('goals', () => {
       targetAmount: 800_000,
       targetDate: '2028-06-01',
       archived: false,
+      heldInAccountId: null,
     })
     const edited = await api.updateGoal(goal.id, { name: 'New roof', targetDate: null })
     expect(edited).toMatchObject({ name: 'New roof', targetDate: null, targetAmount: 800_000 })
@@ -499,5 +500,130 @@ describe('goals', () => {
     expect(events.map((e) => e.summary)).toEqual(
       expect.arrayContaining(['Added goal “Roof”', 'Assigned $5.00 to Roof in Home for 2026-10']),
     )
+  })
+})
+
+describe('held in', () => {
+  async function withSavings() {
+    const ctx = await makeApi()
+    const savings = await ctx.api.createAccount({ name: 'Ally HYSA', type: 'savings' })
+    return { ...ctx, savings }
+  }
+
+  it('ties a goal to an account on create and change', async () => {
+    const { api, home, savings } = await withSavings()
+    const goal = await api.createGoal({
+      categoryId: home.id,
+      name: 'Roof',
+      targetAmount: 100_000,
+      heldInAccountId: savings.id,
+    })
+    expect(goal.heldInAccountId).toBe(savings.id)
+    expect((await api.updateGoal(goal.id, { name: 'Roof!' })).heldInAccountId).toBe(savings.id)
+    expect((await api.updateGoal(goal.id, { heldInAccountId: null })).heldInAccountId).toBeNull()
+  })
+
+  it('only allows an open budget account that is not a credit card', async () => {
+    const { api, home, savings } = await withSavings()
+    const visa = await api.createAccount({ name: 'Visa', type: 'credit' })
+    const brokerage = await api.createAccount({ name: 'Brokerage', type: 'investment' })
+    const old = await api.createAccount({ name: 'Old', type: 'checking' })
+    await api.updateAccount(old.id, { closed: true })
+    const input = { categoryId: home.id, name: 'Roof', targetAmount: 100 }
+    for (const id of [visa.id, brokerage.id]) {
+      await expect(api.createGoal({ ...input, heldInAccountId: id })).rejects.toThrow(
+        /budget account/,
+      )
+    }
+    await expect(api.createGoal({ ...input, heldInAccountId: old.id })).rejects.toThrow(/closed/)
+    await expect(api.createGoal({ ...input, heldInAccountId: 'nope' })).rejects.toThrow(
+      /Account not found/,
+    )
+    // a goal keeps its account after the account closes
+    const goal = await api.createGoal({ ...input, heldInAccountId: savings.id })
+    await api.updateAccount(savings.id, { closed: true })
+    expect((await api.updateGoal(goal.id, { name: 'Roof 2' })).heldInAccountId).toBe(savings.id)
+  })
+
+  it('lets go of goals when the account is deleted', async () => {
+    const { api, home } = await makeApi()
+    const spare = await api.createAccount({ name: 'Spare', type: 'savings' })
+    const goal = await api.createGoal({
+      categoryId: home.id,
+      name: 'Roof',
+      targetAmount: 100,
+      heldInAccountId: spare.id,
+    })
+    await api.deleteAccount(spare.id)
+    expect((await api.listGoals()).find((g) => g.id === goal.id)?.heldInAccountId).toBeNull()
+  })
+
+  it('warns when the goals held in an account add up to more than it holds', async () => {
+    const { api, home, fun, savings } = await withSavings()
+    await api.createTransaction({ accountId: savings.id, date: '2026-10-02', amount: 50_000 })
+    const roof = await api.createGoal({
+      categoryId: home.id,
+      name: 'Roof',
+      targetAmount: 100_000,
+      heldInAccountId: savings.id,
+    })
+    const trip = await api.createGoal({
+      categoryId: fun.id,
+      name: 'Trip',
+      targetAmount: 100_000,
+      heldInAccountId: savings.id,
+    })
+    await api.createGoal({ categoryId: fun.id, name: 'Loose', targetAmount: 100_000 })
+    expect(await api.getAccountHoldings(OCT)).toEqual([
+      { accountId: savings.id, balance: 50_000, held: 0, over: 0, goals: expect.any(Array) },
+    ])
+
+    await api.allocate({ month: OCT, categoryId: home.id, goalId: roof.id, amount: 30_000 })
+    await api.allocate({ month: OCT, categoryId: fun.id, goalId: trip.id, amount: 15_000 })
+    const [ok] = await api.getAccountHoldings(OCT)
+    expect(ok).toMatchObject({ held: 45_000, over: 0 })
+
+    await api.allocate({ month: OCT, categoryId: fun.id, goalId: trip.id, amount: 15_000 })
+    const [over] = await api.getAccountHoldings(OCT)
+    expect(over).toEqual({
+      accountId: savings.id,
+      balance: 50_000,
+      held: 60_000,
+      over: 10_000,
+      goals: [
+        { goalId: roof.id, amount: 30_000 },
+        { goalId: trip.id, amount: 30_000 },
+      ],
+    })
+  })
+
+  it('counts goal money against the account only through the month, and ignores overspent goals', async () => {
+    const { api, home, savings } = await withSavings()
+    await api.createTransaction({ accountId: savings.id, date: '2026-10-02', amount: 10_000 })
+    await api.createTransaction({ accountId: savings.id, date: '2026-11-02', amount: 90_000 })
+    const roof = await api.createGoal({
+      categoryId: home.id,
+      name: 'Roof',
+      targetAmount: 100_000,
+      heldInAccountId: savings.id,
+    })
+    await api.allocate({ month: OCT, categoryId: home.id, goalId: roof.id, amount: 40_000 })
+    expect((await api.getAccountHoldings(OCT))[0]).toMatchObject({
+      balance: 10_000,
+      held: 40_000,
+      over: 30_000,
+    })
+    // November's deposit covers it
+    expect((await api.getAccountHoldings('2026-11'))[0]).toMatchObject({
+      balance: 100_000,
+      over: 0,
+    })
+    // a goal that has been spent past zero holds nothing
+    await api.createTransaction({
+      accountId: savings.id,
+      date: '2026-12-01',
+      splits: [{ categoryId: home.id, goalId: roof.id, amount: -70_000 }],
+    })
+    expect((await api.getAccountHoldings('2026-12'))[0]).toMatchObject({ held: 0, over: 0 })
   })
 })

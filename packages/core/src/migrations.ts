@@ -285,6 +285,34 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX transaction_splits_goal ON transaction_splits(goal_id) WHERE goal_id IS NOT NULL`,
     ],
   },
+  {
+    version: 12,
+    name: 'goal-held-in',
+    // The account a goal's money sits in; null means it isn't tied to one. Nothing enforces
+    // it: the budget only warns when the goals held in an account add up to more than it has.
+    up: [`ALTER TABLE goals ADD COLUMN held_in_account_id TEXT REFERENCES accounts(id)`],
+  },
+  {
+    version: 13,
+    name: 'emergency-fund-settings',
+    // The household's emergency fund: which goal it is, how many months of Need spending it
+    // should cover, and how many trailing months that spending is averaged over. They sit on
+    // the household row so they sync like any other field; the defaults apply on every device.
+    up: [
+      `ALTER TABLE households ADD COLUMN emergency_fund_goal_id TEXT REFERENCES goals(id)`,
+      `ALTER TABLE households ADD COLUMN emergency_fund_months INTEGER NOT NULL DEFAULT 6`,
+      `ALTER TABLE households ADD COLUMN emergency_fund_window INTEGER NOT NULL DEFAULT 12`,
+    ],
+  },
+  {
+    version: 14,
+    name: 'emergency-fund-category',
+    // The emergency fund is a category, not a goal: it appears in the budget like any other.
+    up: [
+      `ALTER TABLE households ADD COLUMN emergency_fund_category_id TEXT REFERENCES categories(id)`,
+      `ALTER TABLE households DROP COLUMN emergency_fund_goal_id`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

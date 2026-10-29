@@ -5,6 +5,7 @@ import {
   type Account,
   type CategoryGroup,
   type Goal,
+  type NeedOrWant,
   type SplitInput,
   type Transaction,
   type TransactionSplit,
@@ -389,17 +390,26 @@ interface Line {
   categoryId: string
   /** A goal of `categoryId` the line is spent from, or ''. */
   goalId: string
+  /** Tags the line as a need or a want whatever its category says, or '' to follow the category. */
+  needOrWant: NeedOrWant | ''
   outflow: string
   inflow: string
 }
 
 const GOAL_PREFIX = 'goal:'
 
-const emptyLine = (): Line => ({ categoryId: '', goalId: '', outflow: '', inflow: '' })
+const emptyLine = (): Line => ({
+  categoryId: '',
+  goalId: '',
+  needOrWant: '',
+  outflow: '',
+  inflow: '',
+})
 
 const lineOf = (s: TransactionSplit): Line => ({
   categoryId: s.categoryId ?? '',
   goalId: s.goalId ?? '',
+  needOrWant: s.needOrWant ?? '',
   outflow: s.amount < 0 ? plain(-s.amount) : '',
   inflow: s.amount > 0 ? plain(s.amount) : '',
 })
@@ -457,6 +467,7 @@ function TransactionRow(props: {
       {
         categoryId: lines[0]!.categoryId,
         goalId: lines[0]!.goalId,
+        needOrWant: lines[0]!.needOrWant,
         outflow: total < 0 ? plain(-total) : '',
         inflow: total > 0 ? plain(total) : '',
       },
@@ -473,6 +484,7 @@ function TransactionRow(props: {
     const splits: SplitInput[] = lines.map((l, i) => ({
       categoryId: l.categoryId || null,
       goalId: l.goalId || null,
+      needOrWant: l.needOrWant || null,
       amount: amounts[i] as number,
     }))
     if (splits.some((s) => s.amount === 0)) {
@@ -517,39 +529,63 @@ function TransactionRow(props: {
     return { categoryId: props.goals.find((g) => g.id === goalId)?.categoryId ?? '', goalId }
   }
 
+  const defaultTag = (categoryId: string) =>
+    props.groups.flatMap((g) => g.categories).find((c) => c.id === categoryId)?.needOrWant ===
+    'need'
+      ? 'need'
+      : 'want'
+
   const categorySelect = (line: Line, i: number, name: string) => (
-    <select
-      aria-label={name}
-      value={line.goalId ? `${GOAL_PREFIX}${line.goalId}` : line.categoryId}
-      disabled={props.transfer !== null && !props.transfer.categoryEditable}
-      onChange={(e) => setLine(i, pick(e.target.value))}
-    >
-      <option value="">{blankFor(line)}</option>
-      {props.groups
-        .filter((g) => !g.hidden)
-        .map((g) => (
-          <optgroup key={g.id} label={g.name}>
-            {g.categories
-              .filter((c) => !c.creditCardAccountId && (!c.hidden || c.id === line.categoryId))
-              .flatMap((c) => [
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>,
-                // Spending from a goal is a planned draw-down of that goal's balance.
-                ...props.goals
-                  .filter(
-                    (goal) =>
-                      goal.categoryId === c.id && (!goal.archived || goal.id === line.goalId),
-                  )
-                  .map((goal) => (
-                    <option key={goal.id} value={`${GOAL_PREFIX}${goal.id}`}>
-                      {`\u00a0\u00a0↳ ${goal.name}${goal.archived ? ' (archived)' : ''}`}
-                    </option>
-                  )),
-              ])}
-          </optgroup>
-        ))}
-    </select>
+    <>
+      <select
+        aria-label={name}
+        value={line.goalId ? `${GOAL_PREFIX}${line.goalId}` : line.categoryId}
+        disabled={props.transfer !== null && !props.transfer.categoryEditable}
+        onChange={(e) => {
+          const picked = pick(e.target.value)
+          // An override belongs to the category it was chosen for.
+          setLine(i, picked.categoryId === line.categoryId ? picked : { ...picked, needOrWant: '' })
+        }}
+      >
+        <option value="">{blankFor(line)}</option>
+        {props.groups
+          .filter((g) => !g.hidden)
+          .map((g) => (
+            <optgroup key={g.id} label={g.name}>
+              {g.categories
+                .filter((c) => !c.creditCardAccountId && (!c.hidden || c.id === line.categoryId))
+                .flatMap((c) => [
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>,
+                  // Spending from a goal is a planned draw-down of that goal's balance.
+                  ...props.goals
+                    .filter(
+                      (goal) =>
+                        goal.categoryId === c.id && (!goal.archived || goal.id === line.goalId),
+                    )
+                    .map((goal) => (
+                      <option key={goal.id} value={`${GOAL_PREFIX}${goal.id}`}>
+                        {`\u00a0\u00a0↳ ${goal.name}${goal.archived ? ' (archived)' : ''}`}
+                      </option>
+                    )),
+                ])}
+            </optgroup>
+          ))}
+      </select>
+      {line.categoryId && !props.transfer && (
+        <select
+          className="need-want-select"
+          aria-label={`Need or want${name === 'Category' ? '' : name.slice('Category'.length)}`}
+          value={line.needOrWant}
+          onChange={(e) => setLine(i, { needOrWant: e.target.value as NeedOrWant | '' })}
+        >
+          <option value="">Default ({defaultTag(line.categoryId)})</option>
+          <option value="need">Need</option>
+          <option value="want">Want</option>
+        </select>
+      )}
+    </>
   )
 
   const amountInputs = (line: Line, i: number, suffix: string) => (

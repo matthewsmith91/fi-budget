@@ -1,6 +1,7 @@
 import { accountsApi, type AccountsApi } from './accounts.ts'
 import { activityApi, type ActivityApi } from './activity.ts'
 import { allocationsApi, type AllocationsApi } from './allocations.ts'
+import { emergencyFundApi, type EmergencyFundApi } from './emergency-fund.ts'
 import { exportJson, importJson, importSqlite } from './budget-file.ts'
 import { changeLog } from './changes.ts'
 import { categoriesApi, type CategoriesApi } from './categories.ts'
@@ -11,6 +12,7 @@ import { investmentsApi, type InvestmentsApi } from './investments.ts'
 import { currentVersion } from './migrations.ts'
 import { payeeRulesApi, type PayeeRulesApi } from './payee-rules.ts'
 import { reconcileApi, type ReconcileApi } from './reconcile.ts'
+import { reportsApi, type ReportsApi } from './reports.ts'
 import type { SqlRunner, StorageAdapter } from './storage.ts'
 import {
   createSyncEngine,
@@ -54,6 +56,8 @@ export interface BudgetApi
     ImportsApi,
     InvestmentsApi,
     PayeeRulesApi,
+    ReportsApi,
+    EmergencyFundApi,
     YnabApi {
   getStatus(): Promise<AppStatus>
   getHousehold(): Promise<Household | null>
@@ -124,6 +128,8 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...importsApi(crud),
     ...investmentsApi(crud),
     ...payeeRulesApi(crud),
+    ...reportsApi(crud),
+    ...emergencyFundApi(crud),
     ...ynabApi(crud),
     ...activityApi({ ...crud, deviceId, mode: sync ? 'sync' : 'local' }),
     async getStatus() {

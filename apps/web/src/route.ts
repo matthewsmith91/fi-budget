@@ -6,6 +6,7 @@ export type Route =
   | { view: 'account'; id: string }
   | { view: 'inbox' }
   | { view: 'activity' }
+  | { view: 'reports' }
   | { view: 'settings'; section: SettingsSection }
 
 export const SETTINGS_SECTIONS = [
@@ -26,6 +27,7 @@ export function parseRoute(hash: string): Route {
     return id ? { view: 'account', id: decodeURIComponent(id) } : { view: 'accounts' }
   if (first === 'inbox') return { view: 'inbox' }
   if (first === 'activity') return { view: 'activity' }
+  if (first === 'reports') return { view: 'reports' }
   if (first === 'settings') {
     const section = SETTINGS_SECTIONS.find((s) => s.id === id)
     return { view: 'settings', section: section?.id ?? null }
@@ -39,6 +41,7 @@ export const hrefFor = {
   account: (id: string) => `#/accounts/${encodeURIComponent(id)}`,
   inbox: '#/inbox',
   activity: '#/activity',
+  reports: '#/reports',
   settings: '#/settings',
   settingsSection: (section: Exclude<SettingsSection, null>) => `#/settings/${section}`,
 }

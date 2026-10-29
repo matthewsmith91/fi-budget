@@ -4,6 +4,7 @@ import { AssignedInput } from './AssignedInput.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
+import { holdingWarning } from './goal-text.ts'
 import { money, monthLabel, monthOf, shiftMonth, todayIso } from './format.ts'
 import { GoalForm, GoalRows } from './GoalRows.tsx'
 import { Menu } from './Menu.tsx'
@@ -27,6 +28,8 @@ export function BudgetView({ today }: { today: Date }) {
   const readyToAssign = useBudgetQuery(() => budget.getReadyToAssign(month), [month])
   const goals = useBudgetQuery(() => budget.listGoals())
   const goalBalances = useBudgetQuery(() => budget.getGoalBalances(month), [month])
+  const accounts = useBudgetQuery(() => budget.listAccounts())
+  const holdings = useBudgetQuery(() => budget.getAccountHoldings(month), [month])
   const [showHidden, setShowHidden] = useState(false)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [addingGroup, setAddingGroup] = useState(false)
@@ -73,6 +76,14 @@ export function BudgetView({ today }: { today: Date }) {
     )
   const totals = sum(shown.flatMap((g) => g.categories))
   const label = monthLabel(month)
+  const accountList = accounts.data ?? []
+  const warnings = (holdings.data ?? []).flatMap((h) => {
+    const text = holdingWarning(
+      h,
+      accountList.find((a) => a.id === h.accountId)?.name ?? 'An account',
+    )
+    return text ? [{ id: h.accountId, text }] : []
+  })
 
   function toggle(id: string) {
     const next = new Set(collapsed)
@@ -118,6 +129,12 @@ export function BudgetView({ today }: { today: Date }) {
           {error}
         </p>
       )}
+
+      {warnings.map((w) => (
+        <div key={w.id} className="banner warn" role="status">
+          {w.text}
+        </div>
+      ))}
 
       <div className="toolbar">
         {addingGroup ? (
@@ -202,7 +219,12 @@ export function BudgetView({ today }: { today: Date }) {
                         <tr className={c.hidden ? 'category-row hidden-row' : 'category-row'}>
                           <th scope="row">
                             <span className="name-cell">
-                              <span className="category-name">{c.name}</span>
+                              <span className="category-name">
+                                {c.name}
+                                <span className="tag need-want">
+                                  {c.needOrWant === 'need' ? 'Need' : 'Want'}
+                                </span>
+                              </span>
                               <span className="row-actions">
                                 <CategoryMenu
                                   category={c}
@@ -231,6 +253,7 @@ export function BudgetView({ today }: { today: Date }) {
                         </tr>
                         <GoalRows
                           goals={goalsOf(c.id)}
+                          accounts={accountList}
                           balances={goalBalances.data ?? []}
                           month={month}
                           editing={editingGoal}
@@ -243,6 +266,7 @@ export function BudgetView({ today }: { today: Date }) {
                             <td colSpan={4}>
                               <GoalForm
                                 label={`New goal in ${c.name}`}
+                                accounts={accountList}
                                 onSubmit={(input) =>
                                   run(() => budget.createGoal({ categoryId: c.id, ...input }))
                                 }

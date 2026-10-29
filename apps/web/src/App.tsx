@@ -9,6 +9,7 @@ import { DataProvider } from './DataProvider.tsx'
 import { getBackupState } from './device-settings.ts'
 import { InboxView } from './InboxView.tsx'
 import { QueueImporter } from './QueueImporter.tsx'
+import { ReportsView } from './ReportsView.tsx'
 import { usePersistentStorage, useServiceWorker } from './hooks.ts'
 import { RegisterView } from './RegisterView.tsx'
 import { useRoute } from './route.ts'
@@ -54,6 +55,8 @@ function Shell() {
     content = <InboxView accounts={accounts.data ?? []} />
   } else if (route.view === 'activity') {
     content = <ActivityView />
+  } else if (route.view === 'reports') {
+    content = <ReportsView today={now} />
   } else if (route.view === 'settings') {
     content = (
       <SettingsView

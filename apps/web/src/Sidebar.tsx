@@ -130,6 +130,7 @@ function BudgetSidebar({
         )}
         {link(hrefFor.accounts, 'All Accounts', route.view === 'accounts')}
         {link(hrefFor.activity, 'Activity', route.view === 'activity')}
+        {link(hrefFor.reports, 'Reports', route.view === 'reports')}
 
         <AccountSection title="Budget" total={total(onBudget)} show={onBudget.length > 0}>
           {accountLinks(onBudget)}

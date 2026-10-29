@@ -136,6 +136,13 @@ export function accountsApi({ adapter, newId, now, changes: log }: CrudDeps): Ac
           [id],
         )
         if (used) throw new Error('This account has transactions; close it instead of deleting')
+        // Goals held in this account are no longer tied to anything.
+        const held = await tx.query<{ id: string }>(
+          'SELECT id FROM goals WHERE held_in_account_id = ?',
+          [id],
+        )
+        for (const goal of held)
+          await log(tx).update('goals', goal.id, { held_in_account_id: null })
         await dropPaymentCategory(tx, log(tx), id)
         await dropInvestmentData(tx, log(tx), id)
         await log(tx).delete('accounts', id)
