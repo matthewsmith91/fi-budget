@@ -1,14 +1,11 @@
-import {
-  parseCents,
-  type Category,
-  type CategoryBalance,
-  type CategoryGroup,
-} from '@budget-fi/core'
-import { useState, type FormEvent } from 'react'
+import { type Category, type CategoryBalance, type CategoryGroup, type Goal } from '@budget-fi/core'
+import { Fragment, useState, type FormEvent } from 'react'
+import { AssignedInput } from './AssignedInput.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
 import { money, monthLabel, monthOf, shiftMonth, todayIso } from './format.ts'
+import { GoalForm, GoalRows } from './GoalRows.tsx'
 import { Menu } from './Menu.tsx'
 
 type Run = (fn: () => Promise<unknown>) => Promise<void>
@@ -28,10 +25,15 @@ export function BudgetView({ today }: { today: Date }) {
   const groups = useBudgetQuery(() => budget.listCategoryGroups())
   const balances = useBudgetQuery(() => budget.getMonthBalances(month), [month])
   const readyToAssign = useBudgetQuery(() => budget.getReadyToAssign(month), [month])
+  const goals = useBudgetQuery(() => budget.listGoals())
+  const goalBalances = useBudgetQuery(() => budget.getGoalBalances(month), [month])
   const [showHidden, setShowHidden] = useState(false)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [addingGroup, setAddingGroup] = useState(false)
   const [addingTo, setAddingTo] = useState<string | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
+  const [addingGoalTo, setAddingGoalTo] = useState<string | null>(null)
+  const [editingGoal, setEditingGoal] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const run: Run = async (fn) => {
@@ -52,6 +54,10 @@ export function BudgetView({ today }: { today: Date }) {
   const shown = all
     .filter((g) => showHidden || !g.hidden)
     .map((g) => ({ ...g, categories: g.categories.filter((c) => showHidden || !c.hidden) }))
+  const allGoals = goals.data ?? []
+  const archivedCount = allGoals.filter((g) => g.archived).length
+  const goalsOf = (categoryId: string): Goal[] =>
+    allGoals.filter((g) => g.categoryId === categoryId && (showArchived || !g.archived))
   const balanceOf = (id: string) => balances.data?.find((b) => b.categoryId === id) ?? ZERO
   const sum = (cats: Category[]) =>
     cats.reduce(
@@ -192,31 +198,60 @@ export function BudgetView({ today }: { today: Date }) {
                   group.categories.map((c, ci) => {
                     const b = balanceOf(c.id)
                     return (
-                      <tr
-                        key={c.id}
-                        className={c.hidden ? 'category-row hidden-row' : 'category-row'}
-                      >
-                        <th scope="row">
-                          <span className="name-cell">
-                            <span className="category-name">{c.name}</span>
-                            <span className="row-actions">
-                              <CategoryMenu category={c} group={group} index={ci} run={run} />
+                      <Fragment key={c.id}>
+                        <tr className={c.hidden ? 'category-row hidden-row' : 'category-row'}>
+                          <th scope="row">
+                            <span className="name-cell">
+                              <span className="category-name">{c.name}</span>
+                              <span className="row-actions">
+                                <CategoryMenu
+                                  category={c}
+                                  group={group}
+                                  index={ci}
+                                  run={run}
+                                  onAddGoal={() => setAddingGoalTo(c.id)}
+                                />
+                              </span>
                             </span>
-                          </span>
-                        </th>
-                        <td className="num">
-                          <AssignedInput
-                            name={c.name}
-                            value={b.assigned}
-                            onCommit={(delta) => assign(c, delta)}
-                            onInvalid={() => setError('Enter the amount as dollars, like 250.00')}
-                          />
-                        </td>
-                        <td className="num col-activity">{money(b.activity)}</td>
-                        <td className="num">
-                          <span className={`pill ${tone(b.available)}`}>{money(b.available)}</span>
-                        </td>
-                      </tr>
+                          </th>
+                          <td className="num">
+                            <AssignedInput
+                              label={`Assigned for ${c.name}`}
+                              value={b.assigned}
+                              onCommit={(delta) => assign(c, delta)}
+                              onInvalid={() => setError('Enter the amount as dollars, like 250.00')}
+                            />
+                          </td>
+                          <td className="num col-activity">{money(b.activity)}</td>
+                          <td className="num">
+                            <span className={`pill ${tone(b.available)}`}>
+                              {money(b.available)}
+                            </span>
+                          </td>
+                        </tr>
+                        <GoalRows
+                          goals={goalsOf(c.id)}
+                          balances={goalBalances.data ?? []}
+                          month={month}
+                          editing={editingGoal}
+                          onEdit={setEditingGoal}
+                          run={run}
+                          onInvalid={() => setError('Enter the amount as dollars, like 250.00')}
+                        />
+                        {addingGoalTo === c.id && (
+                          <tr className="add-row">
+                            <td colSpan={4}>
+                              <GoalForm
+                                label={`New goal in ${c.name}`}
+                                onSubmit={(input) =>
+                                  run(() => budget.createGoal({ categoryId: c.id, ...input }))
+                                }
+                                onDone={() => setAddingGoalTo(null)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     )
                   })}
                 {addingTo === group.id && !isCollapsed && (
@@ -245,6 +280,15 @@ export function BudgetView({ today }: { today: Date }) {
         )}
       </div>
 
+      {archivedCount > 0 && (
+        <p className="muted hidden-toggle">
+          {archivedCount} archived {archivedCount === 1 ? 'goal' : 'goals'} ·{' '}
+          <button type="button" className="link" onClick={() => setShowArchived(!showArchived)}>
+            {showArchived ? 'Hide them' : 'Show them'}
+          </button>
+        </p>
+      )}
+
       {hiddenCount > 0 && (
         <p className="muted hidden-toggle">
           {hiddenCount} hidden {hiddenCount === 1 ? 'category' : 'categories'} ·{' '}
@@ -272,44 +316,6 @@ function ReadyToAssign({ amount }: { amount: number | undefined }) {
       <span className="rta-amount">{money(amount)}</span>
       <span className="rta-title">{title}</span>
     </div>
-  )
-}
-
-function AssignedInput(props: {
-  name: string
-  value: number
-  onCommit: (delta: number) => void
-  onInvalid: () => void
-}) {
-  const shown = money(props.value)
-  return (
-    <input
-      // a new key resets the field to the stored value after every save
-      key={props.value}
-      className="assigned-input"
-      aria-label={`Assigned for ${props.name}`}
-      inputMode="decimal"
-      defaultValue={shown}
-      onFocus={(e) => e.currentTarget.select()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur()
-        if (e.key === 'Escape') {
-          e.currentTarget.value = shown
-          e.currentTarget.blur()
-        }
-      }}
-      onBlur={(e) => {
-        const text = e.currentTarget.value
-        if (text === shown) return
-        const next = parseCents(text)
-        if (next === null) {
-          e.currentTarget.value = shown
-          return props.onInvalid()
-        }
-        if (next !== props.value) props.onCommit(next - props.value)
-        else e.currentTarget.value = shown
-      }}
-    />
   )
 }
 
@@ -400,6 +406,7 @@ function CategoryMenu(props: {
   group: CategoryGroup
   index: number
   run: Run
+  onAddGoal: () => void
 }) {
   const { category: c, group, index, run } = props
   // A card's payment category follows the card, so it can be hidden but not renamed or deleted.
@@ -430,6 +437,7 @@ function CategoryMenu(props: {
                 },
               },
             ]),
+        ...(managed ? [] : [{ label: 'Add goal', onSelect: props.onAddGoal }]),
         {
           label: c.needOrWant === 'need' ? 'Mark as want' : 'Mark as need',
           onSelect: () =>

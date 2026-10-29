@@ -631,3 +631,73 @@ test('an investment account is set up in the add-account dialog and keeps a valu
   await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Investment settings and values/ })).toHaveCount(0)
 })
+
+test('goals: create, fund, spend from, and archive', async ({ page }) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Account type').selectOption('checking')
+  await dialog.getByLabel('Current balance').fill('1000')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Savings')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Savings' }).click()
+  await page.getByLabel('New category in Savings').fill('Household')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  // a goal with a target and a date far enough out that only the label is stable
+  await page.getByRole('button', { name: 'Options for Household' }).click()
+  await page.getByRole('menuitem', { name: 'Add goal' }).click()
+  await page.getByLabel('Goal name').fill('Laptop')
+  await page.getByLabel('Target amount').fill('1200')
+  await page.getByLabel('Target date (optional)').fill('2099-12-31')
+  await page.getByRole('button', { name: 'Add goal' }).click()
+  const goal = page.getByRole('row', { name: /Laptop/ })
+  await expect(goal).toContainText('0% of $1,200.00')
+  await expect(goal).toContainText(/\/mo for Dec 2099/)
+
+  // funding the goal counts in its category and takes the money from Ready to Assign
+  await page.getByLabel('Assigned for goal Laptop').fill('300')
+  await page.getByLabel('Assigned for goal Laptop').press('Enter')
+  await expect(goal).toContainText('25% of $1,200.00')
+  await expect(page.getByRole('row', { name: /^Household/ })).toContainText('$300.00')
+  await expect(page.getByRole('status').filter({ hasText: 'Ready to Assign' })).toContainText(
+    '$700.00',
+  )
+
+  // spending picks the goal; it is a draw-down, not overspending
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await page.getByLabel('Payee').fill('Apple')
+  await page.getByLabel('Category', { exact: true }).selectOption({ label: '  ↳ Laptop' })
+  await page.getByLabel('Outflow').fill('100')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Apple/ })).toContainText('Household: Laptop')
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await expect(goal).toContainText('16% of $1,200.00')
+  await expect(goal).toContainText('$200.00')
+  await expect(page.getByRole('row', { name: /^Household/ })).toContainText('$200.00')
+
+  // archiving hands what is left back to the category and tucks the goal away
+  page.once('dialog', (d) => void d.accept())
+  await page.getByRole('button', { name: 'Options for goal Laptop' }).click()
+  await page.getByRole('menuitem', { name: 'Archive' }).click()
+  await expect(page.getByRole('row', { name: /Laptop/ })).toHaveCount(0)
+  await expect(page.getByRole('row', { name: /^Household/ })).toContainText('$200.00')
+  await page.getByRole('button', { name: 'Show them' }).click()
+  await expect(page.getByRole('row', { name: /Laptop/ })).toContainText('Archived')
+
+  // the goal survives a reload
+  await page.reload()
+  await page.getByRole('button', { name: 'Show them' }).click()
+  await expect(page.getByRole('row', { name: /Laptop/ })).toContainText('Archived')
+})

@@ -5,6 +5,7 @@ import { exportJson, importJson, importSqlite } from './budget-file.ts'
 import { changeLog } from './changes.ts'
 import { categoriesApi, type CategoriesApi } from './categories.ts'
 import { newDeviceId } from './hlc.ts'
+import { goalsApi, type GoalsApi } from './goals.ts'
 import { importsApi, type ImportsApi } from './imports.ts'
 import { investmentsApi, type InvestmentsApi } from './investments.ts'
 import { currentVersion } from './migrations.ts'
@@ -46,6 +47,7 @@ export interface BudgetApi
     AccountsApi,
     CategoriesApi,
     AllocationsApi,
+    GoalsApi,
     TransactionsApi,
     ReconcileApi,
     ActivityApi,
@@ -116,6 +118,7 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...accountsApi(crud),
     ...categoriesApi(crud),
     ...allocationsApi(crud),
+    ...goalsApi(crud),
     ...transactionsApi(crud),
     ...reconcileApi(crud),
     ...importsApi(crud),

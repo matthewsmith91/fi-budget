@@ -261,6 +261,30 @@ export const MIGRATIONS: readonly Migration[] = [
          WHEN 'taxable' THEN 'brokerage' WHEN '529' THEN '529' ELSE 'other' END`,
     ],
   },
+  {
+    version: 11,
+    name: 'goals',
+    // A goal is a sinking fund inside a category. Money reaches it through allocations and
+    // leaves it through splits that carry its id (allocations.goal_id and
+    // transaction_splits.goal_id already exist). No UNIQUE on name: two devices may add the
+    // same goal offline, and the API rejects the duplicates it can see.
+    up: [
+      `CREATE TABLE goals (
+        id TEXT PRIMARY KEY,
+        category_id TEXT NOT NULL REFERENCES categories(id),
+        name TEXT NOT NULL,
+        target_amount INTEGER NOT NULL CHECK (target_amount > 0),
+        target_date TEXT CHECK (target_date IS NULL
+          OR target_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'),
+        archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX goals_category ON goals(category_id)`,
+      `CREATE INDEX allocations_goal ON allocations(goal_id) WHERE goal_id IS NOT NULL`,
+      `CREATE INDEX transaction_splits_goal ON transaction_splits(goal_id) WHERE goal_id IS NOT NULL`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

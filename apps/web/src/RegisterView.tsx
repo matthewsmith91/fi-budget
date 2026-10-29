@@ -4,6 +4,7 @@ import {
   parseCents,
   type Account,
   type CategoryGroup,
+  type Goal,
   type SplitInput,
   type Transaction,
   type TransactionSplit,
@@ -33,6 +34,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
     [accountId],
   )
   const groups = useBudgetQuery(() => budget.listCategoryGroups())
+  const goals = useBudgetQuery(() => budget.listGoals())
   const balances = useBudgetQuery(() => budget.getAccountBalances())
   // 'new' is the blank entry row; otherwise the id of the transaction being edited
   const [editing, setEditing] = useState<string | null>(null)
@@ -78,6 +80,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
   const categoryName = new Map(
     (groups.data ?? []).flatMap((g) => g.categories.map((c) => [c.id, c.name] as const)),
   )
+  const goalName = new Map((goals.data ?? []).map((g) => [g.id, g.name] as const))
   const accountById = new Map(accounts.map((a) => [a.id, a]))
   const payees = [...new Set((transactions.data ?? []).flatMap((t) => (t.payee ? [t.payee] : [])))]
 
@@ -181,6 +184,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                 defaultAccountId={accountId ?? scoped.find((a) => !a.closed)?.id ?? ''}
                 showAccountColumn={showAccountColumn}
                 groups={groups.data ?? []}
+                goals={goals.data ?? []}
                 payees={payees}
                 onCancel={() => setEditing(null)}
                 onSave={(input) =>
@@ -204,6 +208,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                   defaultAccountId={t.accountId}
                   showAccountColumn={showAccountColumn}
                   groups={groups.data ?? []}
+                  goals={goals.data ?? []}
                   payees={payees}
                   onCancel={() => setEditing(null)}
                   transfer={transferInfo(t, accountById)}
@@ -248,7 +253,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                       </>
                     )}
                   </td>
-                  <td>{categoryLabel(t, categoryName, accountById)}</td>
+                  <td>{categoryLabel(t, categoryName, goalName, accountById)}</td>
                   <td className="num">{t.amount < 0 ? money(-t.amount) : ''}</td>
                   <td className="num">{t.amount > 0 ? money(t.amount) : ''}</td>
                   <td className="cleared-col">
@@ -310,12 +315,17 @@ function transferInfo(t: Transaction, accounts: Map<string, Account>) {
 function categoryLabel(
   t: Transaction,
   names: Map<string, string>,
+  goalNames: Map<string, string>,
   accounts: Map<string, Account>,
 ): string {
   if (t.splits.length > 1) return `Split (${t.splits.length})`
   const account = accounts.get(t.accountId)
   const id = t.splits[0]?.categoryId
-  if (id) return names.get(id) ?? 'Unknown category'
+  if (id) {
+    const name = names.get(id) ?? 'Unknown category'
+    const goal = t.splits[0]?.goalId
+    return goal ? `${name}: ${goalName(goalNames, goal)}` : name
+  }
   if (!account?.onBudget) return ''
   if (t.transferPairId) {
     // Between two budget accounts nothing enters or leaves the budget.
@@ -324,6 +334,8 @@ function categoryLabel(
   }
   return t.amount > 0 ? 'Inflow: Ready to Assign' : 'Uncategorized'
 }
+
+const goalName = (names: Map<string, string>, id: string) => names.get(id) ?? 'Unknown goal'
 
 function AccountMenu({
   account,
@@ -375,14 +387,19 @@ interface Entry {
 /** A split line as typed: a category and an amount in either the outflow or inflow box. */
 interface Line {
   categoryId: string
+  /** A goal of `categoryId` the line is spent from, or ''. */
+  goalId: string
   outflow: string
   inflow: string
 }
 
-const emptyLine = (): Line => ({ categoryId: '', outflow: '', inflow: '' })
+const GOAL_PREFIX = 'goal:'
+
+const emptyLine = (): Line => ({ categoryId: '', goalId: '', outflow: '', inflow: '' })
 
 const lineOf = (s: TransactionSplit): Line => ({
   categoryId: s.categoryId ?? '',
+  goalId: s.goalId ?? '',
   outflow: s.amount < 0 ? plain(-s.amount) : '',
   inflow: s.amount > 0 ? plain(s.amount) : '',
 })
@@ -404,6 +421,7 @@ function TransactionRow(props: {
   defaultAccountId: string
   showAccountColumn: boolean
   groups: CategoryGroup[]
+  goals: Goal[]
   payees: string[]
   onCancel: () => void
   onSave: (entry: Entry) => Promise<void>
@@ -438,6 +456,7 @@ function TransactionRow(props: {
     setLines([
       {
         categoryId: lines[0]!.categoryId,
+        goalId: lines[0]!.goalId,
         outflow: total < 0 ? plain(-total) : '',
         inflow: total > 0 ? plain(total) : '',
       },
@@ -453,6 +472,7 @@ function TransactionRow(props: {
     if (bad) return setError(bad as string)
     const splits: SplitInput[] = lines.map((l, i) => ({
       categoryId: l.categoryId || null,
+      goalId: l.goalId || null,
       amount: amounts[i] as number,
     }))
     if (splits.some((s) => s.amount === 0)) {
@@ -490,12 +510,19 @@ function TransactionRow(props: {
     if (e.key === 'Escape') props.onCancel()
   }
 
+  /** A goal option stands for its category plus that goal; a category option clears the goal. */
+  const pick = (value: string): Pick<Line, 'categoryId' | 'goalId'> => {
+    if (!value.startsWith(GOAL_PREFIX)) return { categoryId: value, goalId: '' }
+    const goalId = value.slice(GOAL_PREFIX.length)
+    return { categoryId: props.goals.find((g) => g.id === goalId)?.categoryId ?? '', goalId }
+  }
+
   const categorySelect = (line: Line, i: number, name: string) => (
     <select
       aria-label={name}
-      value={line.categoryId}
+      value={line.goalId ? `${GOAL_PREFIX}${line.goalId}` : line.categoryId}
       disabled={props.transfer !== null && !props.transfer.categoryEditable}
-      onChange={(e) => setLine(i, { categoryId: e.target.value })}
+      onChange={(e) => setLine(i, pick(e.target.value))}
     >
       <option value="">{blankFor(line)}</option>
       {props.groups
@@ -504,11 +531,22 @@ function TransactionRow(props: {
           <optgroup key={g.id} label={g.name}>
             {g.categories
               .filter((c) => !c.creditCardAccountId && (!c.hidden || c.id === line.categoryId))
-              .map((c) => (
+              .flatMap((c) => [
                 <option key={c.id} value={c.id}>
                   {c.name}
-                </option>
-              ))}
+                </option>,
+                // Spending from a goal is a planned draw-down of that goal's balance.
+                ...props.goals
+                  .filter(
+                    (goal) =>
+                      goal.categoryId === c.id && (!goal.archived || goal.id === line.goalId),
+                  )
+                  .map((goal) => (
+                    <option key={goal.id} value={`${GOAL_PREFIX}${goal.id}`}>
+                      {`\u00a0\u00a0↳ ${goal.name}${goal.archived ? ' (archived)' : ''}`}
+                    </option>
+                  )),
+              ])}
           </optgroup>
         ))}
     </select>

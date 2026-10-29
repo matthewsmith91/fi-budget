@@ -241,8 +241,8 @@ Phases are ordered by dependency, not dated. YNAB and Empower stay live until th
 
 ### Phase 3 — Goals and rules
 
-- [ ] Goals under categories: create, fund, spend from, archive
-- [ ] Monthly amount needed and percent funded per goal
+- [x] Goals under categories: create, fund, spend from, archive
+- [x] Monthly amount needed and percent funded per goal
 - [ ] "Held in" account and the over-allocation warning
 - [ ] Need/want tag on categories, with override on splits
 - [ ] Needs vs wants report with trailing averages

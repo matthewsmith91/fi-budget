@@ -522,6 +522,51 @@ describe('two devices editing the same budget offline', () => {
     })
   })
 
+  describe('goals', () => {
+    it('adds up funding made on both devices and shows one archived goal', async () => {
+      const roof = await a.api.createGoal({
+        categoryId: groceries,
+        name: 'Roof',
+        targetAmount: 100_000,
+        targetDate: '2027-03-01',
+      })
+      await converge()
+      await a.api.allocate({ month: OCT, categoryId: groceries, goalId: roof.id, amount: 10_000 })
+      await b.api.allocate({ month: OCT, categoryId: groceries, goalId: roof.id, amount: 5_000 })
+      await b.api.createTransaction({
+        accountId: checking,
+        date: '2026-10-12',
+        categoryId: groceries,
+        goalId: roof.id,
+        amount: -2_000,
+      })
+      await converge()
+      expect((await a.api.getGoalBalances(OCT))[0]).toMatchObject({
+        goalId: roof.id,
+        available: 13_000,
+      })
+      await b.api.archiveGoal(roof.id, { month: OCT })
+      await converge()
+      expect((await a.api.listGoals())[0]!.archived).toBe(true)
+      expect((await a.api.getGoalBalances(OCT))[0]!.available).toBe(0)
+    })
+
+    it('ends with one goal row per device edit, whichever device renamed it', async () => {
+      const roof = await a.api.createGoal({
+        categoryId: groceries,
+        name: 'Roof',
+        targetAmount: 100_000,
+      })
+      await converge()
+      a.clock = T0 + 10_000
+      b.clock = T0 + 20_000
+      await a.api.updateGoal(roof.id, { name: 'Roof fund' })
+      await b.api.updateGoal(roof.id, { targetAmount: 150_000 })
+      await converge()
+      expect(await a.api.listGoals()).toMatchObject([{ name: 'Roof fund', targetAmount: 150_000 }])
+    })
+  })
+
   describe('reconciliation', () => {
     it('locks the same transactions on both devices', async () => {
       await a.api.reconcileAccount({

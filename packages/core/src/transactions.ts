@@ -1,3 +1,4 @@
+import { assertGoalUsable } from './allocations.ts'
 import type { ChangeLog } from './changes.ts'
 import type { CrudDeps } from './crud.ts'
 import { flag } from './crud.ts'
@@ -8,6 +9,8 @@ export interface TransactionSplit {
   id: string
   /** Null means uncategorized; on a budget account an uncategorized inflow is income. */
   categoryId: string | null
+  /** The goal of that category this line is spent from, or null for the category itself. */
+  goalId: string | null
   amount: number
 }
 
@@ -43,6 +46,8 @@ export interface AccountBalance {
 /** One line of a split transaction, as entered. */
 export interface SplitInput {
   categoryId: string | null
+  /** A goal of `categoryId` to spend from; spending from a goal is a planned draw-down. */
+  goalId?: string | null
   /** Integer cents, signed like the transaction. */
   amount: number
 }
@@ -58,6 +63,7 @@ export type NewTransaction = NewTransactionBase &
   (
     | {
         categoryId?: string | null
+        goalId?: string | null
         /** Integer cents; negative for spending, positive for income. */
         amount: number
         splits?: undefined
@@ -66,6 +72,7 @@ export type NewTransaction = NewTransactionBase &
         /** One or more lines; the transaction's amount is their sum. */
         splits: SplitInput[]
         categoryId?: undefined
+        goalId?: undefined
         amount?: undefined
       }
   )
@@ -76,6 +83,11 @@ export interface TransactionPatch {
   cleared?: boolean
   /** Changes the single split; refused on a transaction with several. */
   categoryId?: string | null
+  /**
+   * Same restriction as `categoryId`. Changing the category drops the goal unless a goal of
+   * the new category is named here.
+   */
+  goalId?: string | null
   /** Same restriction as `categoryId`. */
   amount?: number
   /** Replaces every split, and the amount with their sum. Not combinable with `categoryId` or `amount`. */
@@ -138,6 +150,7 @@ interface SplitRow {
   id: string
   transaction_id: string
   category_id: string | null
+  goal_id: string | null
   amount: number
 }
 
@@ -201,12 +214,25 @@ async function assertNotPaymentCategory(db: SqlRunner, id: string) {
   if (row) throw new Error('A credit card payment category can’t be used on a transaction')
 }
 
-async function assertCategoriesExist(db: SqlRunner, splits: SplitInput[]) {
+/**
+ * `keep` is the goals the transaction being edited already spends from, so a line that
+ * stays on an archived goal still saves.
+ */
+async function assertCategoriesExist(
+  db: SqlRunner,
+  splits: SplitInput[],
+  keep: ReadonlySet<string> = new Set(),
+) {
   for (const id of new Set(splits.flatMap((s) => (s.categoryId ? [s.categoryId] : [])))) {
     await assertCategoryExists(db, id)
     await assertNotPaymentCategory(db, id)
   }
+  for (const { categoryId, goalId } of splits) {
+    if (goalId) await assertGoalUsable(db, goalId, categoryId, keep)
+  }
 }
+
+const goalsOf = (t: Transaction) => new Set(t.splits.flatMap((s) => (s.goalId ? [s.goalId] : [])))
 
 export async function loadTransactions(
   db: SqlRunner,
@@ -223,14 +249,14 @@ export async function loadTransactions(
   )
   if (rows.length === 0) return []
   const splits = await db.query<SplitRow & Record<string, never>>(
-    `SELECT s.id, s.transaction_id, s.category_id, s.amount FROM transaction_splits s
+    `SELECT s.id, s.transaction_id, s.category_id, s.goal_id, s.amount FROM transaction_splits s
      JOIN transactions t ON t.id = s.transaction_id ${where} ORDER BY s.rowid`,
     params,
   )
   const byTransaction = new Map<string, TransactionSplit[]>()
   for (const s of splits) {
     const list = byTransaction.get(s.transaction_id) ?? []
-    list.push({ id: s.id, categoryId: s.category_id, amount: s.amount })
+    list.push({ id: s.id, categoryId: s.category_id, goalId: s.goal_id, amount: s.amount })
     byTransaction.set(s.transaction_id, list)
   }
   return rows.map((r) => ({
@@ -307,6 +333,8 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     if (only) {
       await changes.update('transaction_splits', only.id, {
         category_id: patch.categoryId === undefined ? only.categoryId : patch.categoryId || null,
+        // A transfer leg never spends from a goal.
+        goal_id: null,
         amount,
       })
     }
@@ -334,7 +362,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     async createTransaction(input) {
       const { accountId, date, payee, cleared } = input
       const lines: SplitInput[] = input.splits ?? [
-        { categoryId: input.categoryId || null, amount: input.amount },
+        { categoryId: input.categoryId || null, goalId: input.goalId, amount: input.amount },
       ]
       assertDate(date)
       if (input.splits) assertSplits(lines)
@@ -366,6 +394,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
             id: newId(),
             transaction_id: id,
             category_id: line.categoryId || null,
+            goal_id: line.categoryId ? line.goalId || null : null,
             amount: line.amount,
             created_at: at,
           })
@@ -453,14 +482,16 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           cleared: flag(patch.cleared ?? current.cleared),
         })
         if (patch.splits) {
-          await assertCategoriesExist(tx, patch.splits)
+          await assertCategoriesExist(tx, patch.splits, goalsOf(current))
           // Lines keep their rows by position so an edit only logs what changed.
           const at = now()
           for (const [i, line] of patch.splits.entries()) {
             const existing = current.splits[i]
+            const goalId = line.categoryId ? line.goalId || null : null
             if (existing) {
               await changes.update('transaction_splits', existing.id, {
                 category_id: line.categoryId || null,
+                goal_id: goalId,
                 amount: line.amount,
               })
             } else {
@@ -468,6 +499,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
                 id: newId(),
                 transaction_id: id,
                 category_id: line.categoryId || null,
+                goal_id: goalId,
                 amount: line.amount,
                 created_at: at,
               })
@@ -478,7 +510,8 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           }
           return get(tx, id)
         }
-        const touchesSplit = patch.categoryId !== undefined || patch.amount !== undefined
+        const touchesSplit =
+          patch.categoryId !== undefined || patch.goalId !== undefined || patch.amount !== undefined
         if (touchesSplit) {
           const [only, ...rest] = current.splits
           if (!only || rest.length > 0) {
@@ -488,9 +521,19 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
             await assertCategoryExists(tx, patch.categoryId)
             await assertNotPaymentCategory(tx, patch.categoryId)
           }
+          const categoryId =
+            patch.categoryId === undefined ? only.categoryId : patch.categoryId || null
+          // The goal stays only while the category does, unless the patch names another.
+          const goalId =
+            patch.goalId !== undefined
+              ? patch.goalId || null
+              : categoryId === only.categoryId
+                ? only.goalId
+                : null
+          if (goalId) await assertGoalUsable(tx, goalId, categoryId, goalsOf(current))
           await changes.update('transaction_splits', only.id, {
-            category_id:
-              patch.categoryId === undefined ? only.categoryId : patch.categoryId || null,
+            category_id: categoryId,
+            goal_id: categoryId ? goalId : null,
             amount: patch.amount ?? only.amount,
           })
         }

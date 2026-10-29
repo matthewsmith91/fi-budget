@@ -341,6 +341,11 @@ export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): 
           [id],
         )
         for (const rule of rules) await changes.delete('payee_rules', rule.id)
+        // A category with budget history was refused above, so its goals have none either.
+        const goals = await tx.query<{ id: string }>('SELECT id FROM goals WHERE category_id = ?', [
+          id,
+        ])
+        for (const goal of goals) await changes.delete('goals', goal.id)
         await changes.delete('categories', id)
       })
     },

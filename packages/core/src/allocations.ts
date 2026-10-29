@@ -36,24 +36,37 @@ export interface CategoryBalance {
 }
 
 export interface AllocationsApi {
-  /** Adds (or, if negative, removes) money from a category's month. */
+  /**
+   * Adds (or, if negative, removes) money from a category's month. With `goalId` the money
+   * goes to that goal of the category instead of the category's unassigned part.
+   */
   allocate(input: {
     month: Month
     categoryId: string
+    goalId?: string
     amount: number
     note?: string
   }): Promise<Allocation>
-  /** Moves money between categories as a pair of ledger entries. */
+  /**
+   * Moves money between categories, or between goals and the unassigned part of a category,
+   * as a pair of ledger entries. Each end is a category plus, optionally, one of its goals.
+   */
   moveAllocation(input: {
     month: Month
     fromCategoryId: string
+    fromGoalId?: string
     toCategoryId: string
+    toGoalId?: string
     /** Positive cents. */
     amount: number
     note?: string
   }): Promise<[out: Allocation, into: Allocation]>
   /** Ledger entries, oldest first. */
-  listAllocations(filter?: { month?: Month; categoryId?: string }): Promise<Allocation[]>
+  listAllocations(filter?: {
+    month?: Month
+    categoryId?: string
+    goalId?: string
+  }): Promise<Allocation[]>
   /** Assigned, activity and available for every category, in display order. */
   getMonthBalances(month: Month): Promise<CategoryBalance[]>
   /**
@@ -104,6 +117,26 @@ function assertAmount(amount: number): void {
 async function assertCategoryExists(db: SqlRunner, id: string) {
   const [row] = await db.query('SELECT 1 AS x FROM categories WHERE id = ?', [id])
   if (!row) throw new Error('Category not found')
+}
+
+/**
+ * A goal can take money or spending only if it belongs to `categoryId` and is not archived.
+ * `keep` lists archived goals that may still be named, because the row being edited already
+ * uses them.
+ */
+export async function assertGoalUsable(
+  db: SqlRunner,
+  goalId: string,
+  categoryId: string | null,
+  keep: ReadonlySet<string> = new Set(),
+) {
+  const [goal] = await db.query<{ category_id: string; archived: number }>(
+    'SELECT category_id, archived FROM goals WHERE id = ?',
+    [goalId],
+  )
+  if (!goal) throw new Error('Goal not found')
+  if (goal.category_id !== categoryId) throw new Error('That goal belongs to another category')
+  if (goal.archived === 1 && !keep.has(goalId)) throw new Error('That goal is archived')
 }
 
 const cleanNote = (note: string | undefined) => note?.trim() || null
@@ -228,6 +261,7 @@ export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps):
     row: {
       month: Month
       categoryId: string
+      goalId: string | null
       amount: number
       source: AllocationSource
       note: string | null
@@ -238,7 +272,7 @@ export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps):
       id,
       month: row.month,
       category_id: row.categoryId,
-      goal_id: null,
+      goal_id: row.goalId,
       amount: row.amount,
       source: row.source,
       note: row.note,
@@ -248,26 +282,47 @@ export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps):
   }
 
   return {
-    async allocate({ month, categoryId, amount, note }) {
+    async allocate({ month, categoryId, goalId, amount, note }) {
       assertMonth(month)
       assertAmount(amount)
       return adapter.transaction(async (tx) => {
         await assertCategoryExists(tx, categoryId)
-        return insert(tx, { month, categoryId, amount, source: 'manual', note: cleanNote(note) })
+        if (goalId) await assertGoalUsable(tx, goalId, categoryId)
+        return insert(tx, {
+          month,
+          categoryId,
+          goalId: goalId || null,
+          amount,
+          source: 'manual',
+          note: cleanNote(note),
+        })
       })
     },
-    async moveAllocation({ month, fromCategoryId, toCategoryId, amount, note }) {
+    async moveAllocation({
+      month,
+      fromCategoryId,
+      fromGoalId,
+      toCategoryId,
+      toGoalId,
+      amount,
+      note,
+    }) {
       assertMonth(month)
       assertAmount(amount)
       if (amount < 0) throw new Error('Amount to move must be positive')
-      if (fromCategoryId === toCategoryId) throw new Error('Pick two different categories')
+      if (fromCategoryId === toCategoryId && (fromGoalId || null) === (toGoalId || null)) {
+        throw new Error('Pick two different places to move between')
+      }
       return adapter.transaction(async (tx) => {
         await assertCategoryExists(tx, fromCategoryId)
         await assertCategoryExists(tx, toCategoryId)
+        if (fromGoalId) await assertGoalUsable(tx, fromGoalId, fromCategoryId)
+        if (toGoalId) await assertGoalUsable(tx, toGoalId, toCategoryId)
         const n = cleanNote(note)
         const out = await insert(tx, {
           month,
           categoryId: fromCategoryId,
+          goalId: fromGoalId || null,
           amount: -amount,
           source: 'move',
           note: n,
@@ -275,6 +330,7 @@ export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps):
         const into = await insert(tx, {
           month,
           categoryId: toCategoryId,
+          goalId: toGoalId || null,
           amount,
           source: 'move',
           note: n,
@@ -293,6 +349,10 @@ export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps):
       if (filter.categoryId !== undefined) {
         where.push('category_id = ?')
         params.push(filter.categoryId)
+      }
+      if (filter.goalId !== undefined) {
+        where.push('goal_id = ?')
+        params.push(filter.goalId)
       }
       const rows = await adapter.query<AllocationRow & Record<string, never>>(
         `SELECT id, month, category_id, goal_id, amount, source, note, created_at FROM allocations

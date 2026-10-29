@@ -539,7 +539,7 @@ describe('applyMessages', () => {
 
   it.each([
     ['a table that is not synced', { table: 'messages' }],
-    ['a table that does not exist', { table: 'goals' }],
+    ['a table that does not exist', { table: 'budgets' }],
     ['a column the schema lacks', { column: 'colour' }],
     ['the id column', { column: 'id' }],
     ['a timestamp far in the future', { timestamp: '2027-01-01T00:00:00.000Z-0000-' + B }],

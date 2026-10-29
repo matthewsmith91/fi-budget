@@ -1146,3 +1146,44 @@ ul.plain {
   margin: 0;
   padding: 0;
 }
+
+/* ---------- goals ---------- */
+
+.goal-row:hover > * {
+  background: var(--row-hover);
+}
+
+.goal-name {
+  display: grid;
+  gap: 0.15rem;
+  padding-left: 3.4rem;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.goal-status {
+  font-size: 0.82rem;
+}
+
+.goal-bar {
+  display: block;
+  height: 0.3rem;
+  max-width: 14rem;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.goal-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--focus);
+}
+
+.goal-form {
+  flex-wrap: wrap;
+}
+
+.goal-form input {
+  min-width: 9rem;
+}

@@ -13,6 +13,7 @@ export const SYNCED_TABLES: readonly string[] = [
   'category_groups',
   'categories',
   'allocations',
+  'goals',
   'transactions',
   'transaction_splits',
   'external_accounts',

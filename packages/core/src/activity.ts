@@ -50,6 +50,7 @@ const FEED_TABLES = [
   'category_groups',
   'categories',
   'allocations',
+  'goals',
   'transactions',
   'transaction_splits',
 ] as const
@@ -62,6 +63,7 @@ const NOUN: Record<FeedTable, string> = {
   category_groups: 'category group',
   categories: 'category',
   allocations: 'allocation',
+  goals: 'goal',
   transactions: 'transaction',
   transaction_splits: 'transaction',
 }
@@ -131,12 +133,14 @@ async function describe(db: SqlRunner, g: Group, kind: ActivityKind, fields: str
         values.get('category_id') ?? null,
         'a category',
       )
+      const goalId = values.get('goal_id')
+      const goal = goalId ? await nameOf(db, 'goals', goalId, 'a goal') : null
       const month = values.get('month')
       const into =
         typeof amount === 'number' && amount < 0
           ? `Took ${money(-amount)} out of`
           : `Assigned ${money(amount ?? 0)} to`
-      return `${into} ${category} for ${String(month)}`
+      return `${into} ${goal ? `${goal} in ${category}` : category} for ${String(month)}`
     }
     return `${kind === 'deleted' ? 'Deleted' : 'Changed'} an allocation`
   }
