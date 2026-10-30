@@ -49,9 +49,9 @@ test('boots on durable storage at the latest schema', async ({ page }) => {
   await page.goto('/')
   await setUpHousehold(page)
   await openSettings(page)
-  await expect(page.getByText('On this device', { exact: true })).toBeVisible()
-  await expect(page.getByText('Memory only')).toHaveCount(0)
-  await expect(page.getByText('$1,234.56')).toBeVisible()
+  await expect(page.getByText('Saved on this device')).toBeVisible()
+  await expect(page.getByText('Not saved')).toHaveCount(0)
+  await expect(page.getByText(/^Schema version \d+/)).toBeVisible()
   const manifest = await (await page.request.get('/manifest.webmanifest')).json()
   expect(manifest.display).toBe('standalone')
   expect(manifest.icons.map((i: { sizes: string }) => i.sizes)).toContain('512x512')
@@ -75,9 +75,8 @@ test('data survives a reload and works offline from the service worker', async (
   await page.goto('/')
   await setUpHousehold(page)
   await openSettings(page)
-  await expect(
-    page.getByText('Offline ready').locator('xpath=following-sibling::dd[1]'),
-  ).toHaveText('yes', {
+  // the Offline row shows only until the service worker has cached the app
+  await expect(page.getByText('Still getting ready to work without a connection')).toHaveCount(0, {
     timeout: 20_000,
   })
   await backToBudget(page)

@@ -1,5 +1,5 @@
 import type { Account, AccountBalance, Household } from '@budget-fi/core'
-import { hrefFor, SETTINGS_SECTIONS, type Route } from './route.ts'
+import { hrefFor, SETTINGS_GROUPS, SETTINGS_SECTIONS, type Route } from './route.ts'
 import { money } from './format.ts'
 
 interface Props {
@@ -55,9 +55,18 @@ function SettingsSidebar(props: {
       </div>
       <nav>
         {link(hrefFor.settings, 'Settings', props.route.section === null)}
-        {SETTINGS_SECTIONS.map((s) =>
-          link(hrefFor.settingsSection(s.id), s.label, props.route.section === s.id),
-        )}
+        {SETTINGS_GROUPS.map((g) => (
+          <div key={g.id} className="account-section">
+            <h2>{g.label}</h2>
+            <ul className="plain">
+              {SETTINGS_SECTIONS.filter((s) => s.group === g.id).map((s) => (
+                <li key={s.id}>
+                  {link(hrefFor.settingsSection(s.id), s.label, props.route.section === s.id)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </nav>
     </aside>
   )

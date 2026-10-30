@@ -38,3 +38,25 @@ export function shouldAutoSync(view: SyncView | null): boolean {
 }
 
 export const changeCount = (n: number) => `${n} ${n === 1 ? 'change' : 'changes'}`
+
+/** What the banner and the Settings page say about a sync view, so the two never disagree. */
+export function describeSync(view: SyncView): string {
+  switch (view.kind) {
+    case 'syncing':
+      return 'Syncing…'
+    case 'offline':
+      return view.pending > 0
+        ? `Offline. ${changeCount(view.pending)} will sync when you’re back online.`
+        : 'Offline. Changes you make will sync when you’re back online.'
+    case 'signin':
+      return `Signed out of the server, so changes aren’t syncing${view.pending > 0 ? ` (${changeCount(view.pending)} waiting)` : ''}.`
+    case 'error':
+      return `Couldn’t sync: ${view.message}`
+    case 'unsynced':
+      return `${changeCount(view.pending)} not yet synced.`
+    case 'synced':
+      return view.lastSyncAt
+        ? `Synced at ${new Date(view.lastSyncAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+        : 'Synced.'
+  }
+}

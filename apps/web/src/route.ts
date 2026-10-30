@@ -12,12 +12,19 @@ export type Route =
   | { view: 'settings'; section: SettingsSection }
 
 export const SETTINGS_SECTIONS = [
-  { id: 'household', label: 'Household' },
-  { id: 'connections', label: 'Connections' },
-  { id: 'payee-rules', label: 'Payee rules' },
-  { id: 'income-rules', label: 'Income rules' },
-  { id: 'imports', label: 'Imports' },
-  { id: 'backups', label: 'Backups' },
+  { id: 'household', label: 'Household', group: 'setup' },
+  { id: 'connections', label: 'Connections', group: 'setup' },
+  { id: 'payee-rules', label: 'Payee rules', group: 'automation' },
+  { id: 'income-rules', label: 'Income rules', group: 'automation' },
+  { id: 'imports', label: 'Imports', group: 'data' },
+  { id: 'backups', label: 'Backups', group: 'data' },
+] as const
+
+/** How the settings pages are grouped, in order, on the Settings page and in its sidebar. */
+export const SETTINGS_GROUPS = [
+  { id: 'setup', label: 'Setup' },
+  { id: 'automation', label: 'Automation' },
+  { id: 'data', label: 'Data' },
 ] as const
 
 /** `null` is the Settings root page. */

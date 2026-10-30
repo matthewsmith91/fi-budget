@@ -3,7 +3,7 @@
   --bg: #f4f6fa;
   --surface: #ffffff;
   --fg: #1d2433;
-  --muted: #6b7587;
+  --muted: #636d80;
   --line: #e3e7ee;
   --row-hover: #f0f4fb;
   --group-bg: #eef1f7;
@@ -436,8 +436,103 @@ main {
   margin: 0;
 }
 
+/* Settings page: data-safety status, then the grouped list of settings pages */
+.status-list {
+  display: grid;
+}
+
+.status-row {
+  display: grid;
+  grid-template-columns: 9rem 1fr auto;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.status-row:first-child {
+  border-top: 0;
+}
+
+.status-label {
+  color: var(--muted);
+}
+
+.status-mark {
+  display: inline-block;
+  width: 1.25rem;
+}
+
+.status-ok .status-mark {
+  color: var(--good-fg);
+}
+
+.status-warn .status-text {
+  color: var(--warn-fg);
+}
+
+@media (max-width: 40rem) {
+  .status-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* a link on its own line needs a finger-sized target */
+  .status-row a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+}
+
+.page-blurb {
+  margin: 0.25rem 0 0;
+}
+
+.group-heading {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-links {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.settings-links li + li {
+  border-top: 1px solid var(--line);
+}
+
 .settings-link {
-  display: contents;
+  display: grid;
+  gap: 0.15rem;
+  min-height: 2.75rem;
+  padding: 0.7rem 1.1rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.settings-link:hover {
+  background: var(--row-hover);
+}
+
+.settings-link-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.settings-link-blurb {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.about {
+  margin-top: 1.5rem;
+  font-size: 0.85rem;
 }
 
 .card dt {
@@ -865,6 +960,9 @@ tr:focus-within .row-actions {
 @media (max-width: 800px) {
   .shell {
     grid-template-columns: minmax(0, 1fr);
+    /* the sidebar is a fixed drawer here; without this a short page stretches the top bar */
+    grid-template-rows: auto 1fr;
+    align-content: start;
   }
 
   .topbar {

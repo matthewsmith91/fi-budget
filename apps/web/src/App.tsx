@@ -19,6 +19,7 @@ import { SettingsView } from './SettingsView.tsx'
 import { SetupView } from './SetupView.tsx'
 import { Sidebar } from './Sidebar.tsx'
 import { SyncBanner } from './SyncBanner.tsx'
+import { SyncProvider } from './SyncProvider.tsx'
 
 export default function App() {
   return (
@@ -45,7 +46,9 @@ function Shell() {
 
   if (status.error) return <StartupError error={status.error} />
 
-  const reminderDue = backupReminderDue({ ...backup, now })
+  // The Settings page lists these itself, in its "Your data" card
+  const onSettingsRoot = route.view === 'settings' && route.section === null
+  const reminderDue = backupReminderDue({ ...backup, now }) && !onSettingsRoot
   const noHousehold = !household.loading && !household.data
 
   let content: React.ReactNode
@@ -87,69 +90,71 @@ function Shell() {
   }
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Menu"
-          aria-expanded={navOpen}
-          onClick={() => setNavOpen(!navOpen)}
-        >
-          ☰
-        </button>
-        <span>{household.data?.name ?? 'Household Budget'}</span>
-      </header>
+    <SyncProvider>
+      <div className="shell">
+        <header className="topbar">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Menu"
+            aria-expanded={navOpen}
+            onClick={() => setNavOpen(!navOpen)}
+          >
+            ☰
+          </button>
+          <span>{household.data?.name ?? 'Household Budget'}</span>
+        </header>
 
-      <Sidebar
-        household={household.data ?? null}
-        accounts={accounts.data ?? []}
-        balances={balances.data ?? []}
-        inboxCount={inbox.data?.length ?? 0}
-        route={route}
-        open={navOpen}
-        onNavigate={() => setNavOpen(false)}
-        onAddAccount={() => {
-          setNavOpen(false)
-          setAdding(true)
-        }}
-      />
-      {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
+        <Sidebar
+          household={household.data ?? null}
+          accounts={accounts.data ?? []}
+          balances={balances.data ?? []}
+          inboxCount={inbox.data?.length ?? 0}
+          route={route}
+          open={navOpen}
+          onNavigate={() => setNavOpen(false)}
+          onAddAccount={() => {
+            setNavOpen(false)
+            setAdding(true)
+          }}
+        />
+        {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
 
-      <main>
-        {household.data && <QueueImporter />}
-        <SyncBanner />
-        {sw.needRefresh && (
-          <div className="banner" role="status">
-            A new version is ready. <button onClick={sw.applyUpdate}>Update now</button>
-          </div>
-        )}
-        {status.data?.storage === 'memory' && (
-          <div className="banner warn" role="alert">
-            This browser can’t keep data between visits. Everything here is lost when you close the
-            tab. Export a backup before leaving, or open the app in a different browser.
-          </div>
-        )}
-        {persist === 'denied' && (
-          <div className="banner warn" role="status">
-            The browser hasn’t promised to keep this data. Installing the app to your home screen
-            usually fixes that. Until then, back up regularly.
-          </div>
-        )}
-        {reminderDue && household.data && (
-          <div className="banner warn" role="status">
-            {backup.lastBackupAt
-              ? `Your last backup was on ${new Date(backup.lastBackupAt).toLocaleDateString()}.`
-              : 'This device has never been backed up.'}{' '}
-            This budget only exists on this device, so{' '}
-            <a href="#/settings/backups">export a backup</a>.
-          </div>
-        )}
-        {content}
-      </main>
+        <main>
+          {household.data && <QueueImporter />}
+          <SyncBanner />
+          {sw.needRefresh && (
+            <div className="banner" role="status">
+              A new version is ready. <button onClick={sw.applyUpdate}>Update now</button>
+            </div>
+          )}
+          {status.data?.storage === 'memory' && (
+            <div className="banner warn" role="alert">
+              This browser can’t keep data between visits. Everything here is lost when you close
+              the tab. Export a backup before leaving, or open the app in a different browser.
+            </div>
+          )}
+          {persist === 'denied' && !onSettingsRoot && (
+            <div className="banner warn" role="status">
+              The browser hasn’t promised to keep this data. Installing the app to your home screen
+              usually fixes that. Until then, back up regularly.
+            </div>
+          )}
+          {reminderDue && household.data && (
+            <div className="banner warn" role="status">
+              {backup.lastBackupAt
+                ? `Your last backup was on ${new Date(backup.lastBackupAt).toLocaleDateString()}.`
+                : 'This device has never been backed up.'}{' '}
+              This budget only exists on this device, so{' '}
+              <a href="#/settings/backups">export a backup</a>.
+            </div>
+          )}
+          {content}
+        </main>
 
-      <AddAccountDialog open={adding} onClose={() => setAdding(false)} />
-    </div>
+        <AddAccountDialog open={adding} onClose={() => setAdding(false)} />
+      </div>
+    </SyncProvider>
   )
 }
 
