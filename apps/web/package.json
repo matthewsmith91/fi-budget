@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "demo": "vite --mode demo --open",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "typecheck": "tsc -b",

@@ -3,7 +3,7 @@ import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     VitePWA({
@@ -44,10 +44,14 @@ export default defineConfig({
   optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm'] },
   worker: { format: 'es' },
   // In production the server serves the app and the API from one origin; mirror that in dev.
+  // `npm run demo` (mode "demo") has no server behind it, so nothing is proxied.
   server: {
-    proxy: {
-      '/api': 'http://localhost:3001',
-      '/health': 'http://localhost:3001',
-    },
+    proxy:
+      mode === 'demo'
+        ? undefined
+        : {
+            '/api': 'http://localhost:3001',
+            '/health': 'http://localhost:3001',
+          },
   },
-})
+}))

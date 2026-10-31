@@ -5,12 +5,14 @@ import {
   httpSyncTransport,
   memoryBackend,
   migrate,
+  seedDemoBudget,
   serve,
   SqliteAdapter,
   type Endpoint,
   type RpcMethods,
   type SqliteBackend,
 } from '@budget-fi/core'
+import { DEMO } from '../demo-mode.ts'
 import { loadDeviceId } from './device-id.ts'
 import { DatabaseLockedError } from './errors.ts'
 
@@ -41,28 +43,38 @@ async function opfsBackend(sqlite3: Sqlite3Static): Promise<SqliteBackend> {
   }
 }
 
+function localToday(now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
 async function start(): Promise<RpcMethods> {
-  if (!(await acquireDatabaseLock())) throw new DatabaseLockedError()
+  // Demo mode never opens the real database, so it needs neither its lock nor OPFS.
+  if (!DEMO && !(await acquireDatabaseLock())) throw new DatabaseLockedError()
   const sqlite3 = await sqlite3InitModule()
   let storage: 'opfs' | 'memory' = 'opfs'
   let backend: SqliteBackend
   try {
+    if (DEMO) throw new Error('demo mode keeps the budget in memory')
     backend = await opfsBackend(sqlite3)
   } catch (err) {
     // No OPFS (private browsing, old browser): run, but be loud that nothing persists.
-    console.warn('OPFS unavailable, falling back to memory', err)
+    if (!DEMO) console.warn('OPFS unavailable, falling back to memory', err)
     storage = 'memory'
     backend = memoryBackend(sqlite3)
   }
   const adapter = await SqliteAdapter.open(sqlite3, backend)
   await migrate(adapter)
-  return createBudgetApi({
+  const api = createBudgetApi({
     adapter,
     storage,
     deviceId: await loadDeviceId(),
-    syncTransport: httpSyncTransport(),
+    // No server in demo mode: sync and the bank proxy report themselves unavailable.
+    syncTransport: DEMO ? undefined : httpSyncTransport(),
     sqliteVersion: sqlite3.version.libVersion,
-  }) as unknown as RpcMethods
+  })
+  if (DEMO) await seedDemoBudget(api, { today: localToday() })
+  return api as unknown as RpcMethods
 }
 
 serve(start(), self as unknown as Endpoint)

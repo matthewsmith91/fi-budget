@@ -7,6 +7,7 @@ import { BudgetView } from './BudgetView.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { DataProvider } from './DataProvider.tsx'
+import { DEMO } from './demo-mode.ts'
 import { getBackupState } from './device-settings.ts'
 import { InboxView } from './InboxView.tsx'
 import { QueueImporter } from './QueueImporter.tsx'
@@ -48,7 +49,7 @@ function Shell() {
 
   // The Settings page lists these itself, in its "Your data" card
   const onSettingsRoot = route.view === 'settings' && route.section === null
-  const reminderDue = backupReminderDue({ ...backup, now }) && !onSettingsRoot
+  const reminderDue = backupReminderDue({ ...backup, now }) && !onSettingsRoot && !DEMO
   const noHousehold = !household.loading && !household.data
 
   let content: React.ReactNode
@@ -122,19 +123,24 @@ function Shell() {
 
         <main>
           {household.data && <QueueImporter />}
+          {DEMO && (
+            <div className="banner" role="status">
+              <strong>Demo.</strong> Made-up data, kept in memory. Reload the page to start over.
+            </div>
+          )}
           <SyncBanner />
           {sw.needRefresh && (
             <div className="banner" role="status">
               A new version is ready. <button onClick={sw.applyUpdate}>Update now</button>
             </div>
           )}
-          {status.data?.storage === 'memory' && (
+          {status.data?.storage === 'memory' && !DEMO && (
             <div className="banner warn" role="alert">
               This browser can’t keep data between visits. Everything here is lost when you close
               the tab. Export a backup before leaving, or open the app in a different browser.
             </div>
           )}
-          {persist === 'denied' && !onSettingsRoot && (
+          {persist === 'denied' && !onSettingsRoot && !DEMO && (
             <div className="banner warn" role="status">
               The browser hasn’t promised to keep this data. Installing the app to your home screen
               usually fixes that. Until then, back up regularly.

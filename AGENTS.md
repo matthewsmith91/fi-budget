@@ -24,6 +24,8 @@ npm workspaces monorepo orchestrated by Turborepo: `apps/web` (React 19 + Vite P
 
 Commands are the scripts in the root `package.json` (npm 11 + Turborepo). `npm run test:e2e` needs Google Chrome installed. `npm run format:check` is what CI runs. `npm run build -w web` is `tsc -b && vite build` and also generates the service worker. In `apps/web`, `npx pwa-assets-generator` regenerates icons from `public/icon.svg`.
 
+`npm run demo` starts the web app in demo mode (`vite --mode demo`, `VITE_DEMO` from `apps/web/.env.demo`): the worker keeps the budget in memory (the real OPFS database and its lock are never opened), fills it on every load with `seedDemoBudget` (`packages/core/src/demo.ts`, public `BudgetApi` only, dates relative to today, covered by `demo.test.ts`) and has no sync server. When a feature adds a new kind of data or screen, add an example of it to the seed.
+
 Self-hosting, deployment and server configuration (Docker/Caddy, `ORIGIN`/passkeys, `BANK_KEY`, the daily bank pull): see the `self-hosting` skill.
 
 The service worker only exists in production builds, so test PWA behavior with `npm run test:e2e` or `npm run build -w web && npx vite preview`.
