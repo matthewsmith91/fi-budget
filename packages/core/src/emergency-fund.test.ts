@@ -222,3 +222,112 @@ describe('migration 14', () => {
     expect(h).not.toHaveProperty('emergency_fund_goal_id')
   })
 })
+
+describe('createEmergencyFund and deleteEmergencyFund', () => {
+  const groupsOf = async (api: Awaited<ReturnType<typeof makeApi>>['api']) =>
+    (await api.listCategoryGroups()).find((g) => g.id === 'reserves')
+
+  it('makes an Emergency Fund category in a Reserves group and points the setting at it', async () => {
+    const { api } = await makeApi()
+    const saved = await api.createEmergencyFund({ months: 3 })
+    expect(saved).toEqual({ categoryId: 'emergency-fund', months: 3, window: 12 })
+    const reserves = await groupsOf(api)
+    expect(reserves?.name).toBe('Reserves')
+    expect(reserves?.categories.map((c) => [c.id, c.name, c.needOrWant])).toEqual([
+      ['emergency-fund', 'Emergency Fund', 'need'],
+    ])
+    expect((await api.getEmergencyFund({ asOf: '2026-10' })).settings.categoryId).toBe(
+      'emergency-fund',
+    )
+  })
+
+  it('adopts a category the household already has', async () => {
+    const { api, fund } = await makeApi()
+    await api.createEmergencyFund({ categoryId: fund.id })
+    expect((await api.getEmergencyFund({ asOf: '2026-10' })).settings.categoryId).toBe(fund.id)
+    expect(await groupsOf(api)).toBeUndefined()
+  })
+
+  it('refuses a second fund, a bad range and a card payment category', async () => {
+    const { api } = await makeApi()
+    await expect(api.createEmergencyFund({ months: 99 })).rejects.toThrow('Months of coverage')
+    await api.createAccount({ name: 'Visa', type: 'credit' })
+    const card = (await api.listCategoryGroups())
+      .flatMap((g) => g.categories)
+      .find((c) => c.creditCardAccountId)!
+    await expect(api.createEmergencyFund({ categoryId: card.id })).rejects.toThrow(
+      'credit card payment category',
+    )
+    await api.createEmergencyFund()
+    await expect(api.createEmergencyFund()).rejects.toThrow('already an emergency fund')
+  })
+
+  it('reuses a Reserves group and an Emergency Fund category that already exist', async () => {
+    const { api } = await makeApi()
+    const mine = await api.createCategoryGroup({ name: 'reserves' })
+    const named = await api.createCategory({ groupId: mine.id, name: 'emergency fund' })
+    await api.createEmergencyFund()
+    expect((await api.getEmergencyFund({ asOf: '2026-10' })).settings.categoryId).toBe(named.id)
+    expect((await api.listCategoryGroups()).filter((g) => /reserves/i.test(g.name))).toHaveLength(1)
+  })
+
+  it('deletes a fund that was never used, and its group with it', async () => {
+    const { api } = await makeApi()
+    await api.createEmergencyFund({ months: 4, window: 6 })
+    const removal = await api.deleteEmergencyFund({ month: '2026-10' })
+    expect(removal.outcome).toBe('deleted')
+    expect(await groupsOf(api)).toBeUndefined()
+    expect((await api.getEmergencyFund({ asOf: '2026-10' })).settings).toEqual({
+      categoryId: null,
+      months: 4,
+      window: 6,
+    })
+  })
+
+  it('hands a used fund’s money back to Ready to Assign and hides it and its group', async () => {
+    const { api } = await makeApi()
+    await api.createEmergencyFund()
+    const before = await api.getReadyToAssign('2026-10')
+    await api.allocate({ month: '2026-10', categoryId: 'emergency-fund', amount: 200_000 })
+    expect(await api.getReadyToAssign('2026-10')).toBe(before - 200_000)
+    const removal = await api.deleteEmergencyFund({ month: '2026-10' })
+    expect(removal).toMatchObject({ outcome: 'hidden', returned: 200_000, emergencyFund: true })
+    expect(await api.getReadyToAssign('2026-10')).toBe(before)
+    const reserves = await groupsOf(api)
+    expect(reserves?.hidden).toBe(true)
+    expect(reserves?.categories[0]?.hidden).toBe(true)
+    expect((await api.getEmergencyFund({ asOf: '2026-10' })).settings.categoryId).toBeNull()
+  })
+
+  it('brings the same category and group back when the fund is made again', async () => {
+    const { api } = await makeApi()
+    await api.createEmergencyFund()
+    await api.allocate({ month: '2026-10', categoryId: 'emergency-fund', amount: 100_000 })
+    await api.deleteEmergencyFund({ month: '2026-10' })
+    await api.createEmergencyFund()
+    const reserves = await groupsOf(api)
+    expect(reserves?.hidden).toBe(false)
+    expect(reserves?.categories.map((c) => [c.id, c.hidden])).toEqual([['emergency-fund', false]])
+    expect((await api.getEmergencyFund({ asOf: '2026-10' })).balance).toBe(0)
+  })
+
+  it('refuses to delete an overspent fund, and with no fund', async () => {
+    const { api, spend } = await makeApi()
+    await expect(api.deleteEmergencyFund({ month: '2026-10' })).rejects.toThrow('no emergency fund')
+    await api.createEmergencyFund()
+    await spend('2026-10-03', 'emergency-fund', 50_000)
+    await expect(api.deleteEmergencyFund({ month: '2026-10' })).rejects.toThrow('overspent')
+    expect((await api.getEmergencyFund({ asOf: '2026-10' })).settings.categoryId).toBe(
+      'emergency-fund',
+    )
+  })
+
+  it('leaves a shared group alone when the fund was adopted from it', async () => {
+    const { api, fund, group } = await makeApi()
+    await api.createEmergencyFund({ categoryId: fund.id })
+    await api.deleteEmergencyFund({ month: '2026-10' })
+    const g = (await api.listCategoryGroups()).find((x) => x.id === group.id)
+    expect(g?.categories.some((c) => c.id === fund.id)).toBe(false)
+    expect(g?.hidden).toBe(false)
+  })
+})

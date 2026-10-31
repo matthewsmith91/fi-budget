@@ -271,6 +271,80 @@ export async function ensurePaymentCategory(
   })
 }
 
+export const RESERVES_GROUP_ID = 'reserves'
+export const EMERGENCY_FUND_CATEGORY_ID = 'emergency-fund'
+
+/**
+ * Gives the emergency fund its category in the Reserves group, under deterministic ids so two
+ * devices that create it offline end up with one row each. Brings back a hidden group or
+ * category (a fund that was deleted and is being made again) and reuses a group or category the
+ * household already named the same.
+ */
+export async function ensureEmergencyFundCategory(
+  tx: SqlRunner,
+  changes: ChangeLog,
+  at: string,
+): Promise<string> {
+  let [group] = await tx.query<{ id: string; hidden: number }>(
+    `SELECT id, hidden FROM category_groups
+     WHERE id = ? OR name = 'Reserves' COLLATE NOCASE ORDER BY id = ? DESC, created_at, id LIMIT 1`,
+    [RESERVES_GROUP_ID, RESERVES_GROUP_ID],
+  )
+  if (!group) {
+    await changes.insert('category_groups', {
+      id: RESERVES_GROUP_ID,
+      name: 'Reserves',
+      sort: await nextSort(tx, 'category_groups'),
+      hidden: 0,
+      created_at: at,
+    })
+    group = { id: RESERVES_GROUP_ID, hidden: 0 }
+  } else if (group.hidden === 1) {
+    await changes.update('category_groups', group.id, { hidden: 0 })
+  }
+  const [existing] = await tx.query<{ id: string; hidden: number }>(
+    `SELECT id, hidden FROM categories
+     WHERE id = ? OR (group_id = ? AND name = 'Emergency Fund' COLLATE NOCASE)
+     ORDER BY id = ? DESC, created_at, id LIMIT 1`,
+    [EMERGENCY_FUND_CATEGORY_ID, group.id, EMERGENCY_FUND_CATEGORY_ID],
+  )
+  if (existing) {
+    if (existing.hidden === 1) await changes.update('categories', existing.id, { hidden: 0 })
+    return existing.id
+  }
+  await changes.insert('categories', {
+    id: EMERGENCY_FUND_CATEGORY_ID,
+    group_id: group.id,
+    name: 'Emergency Fund',
+    need_or_want: 'need',
+    sort: await nextSort(tx, 'categories', group.id),
+    hidden: 0,
+    created_at: at,
+  })
+  return EMERGENCY_FUND_CATEGORY_ID
+}
+
+/**
+ * After the emergency fund is removed: the Reserves group that held it goes too if nothing
+ * visible is left in it (deleted when empty, hidden when old transactions still use a category).
+ */
+export async function tidyReservesGroup(tx: SqlRunner, changes: ChangeLog): Promise<void> {
+  const [group] = await tx.query('SELECT 1 AS x FROM category_groups WHERE id = ?', [
+    RESERVES_GROUP_ID,
+  ])
+  if (!group) return
+  const [visible] = await tx.query(
+    'SELECT 1 AS x FROM categories WHERE group_id = ? AND hidden = 0 LIMIT 1',
+    [RESERVES_GROUP_ID],
+  )
+  if (visible) return
+  const [any] = await tx.query('SELECT 1 AS x FROM categories WHERE group_id = ? LIMIT 1', [
+    RESERVES_GROUP_ID,
+  ])
+  if (any) await changes.update('category_groups', RESERVES_GROUP_ID, { hidden: 1 })
+  else await changes.delete('category_groups', RESERVES_GROUP_ID)
+}
+
 /** Hides a card's payment category, e.g. once the account leaves the budget. */
 export async function hidePaymentCategory(
   tx: SqlRunner,
@@ -362,6 +436,46 @@ async function planRemoval(db: SqlRunner, id: string, month: Month) {
     blocked,
   }
   return { summary, category, available, goals }
+}
+
+/** `removeCategory` inside a transaction the caller already holds. */
+export async function removeCategoryIn(
+  tx: SqlRunner,
+  deps: Pick<CrudDeps, 'newId' | 'now' | 'changes'>,
+  id: string,
+  month: Month,
+): Promise<CategoryRemoval> {
+  const { summary, category, available, goals } = await planRemoval(tx, id, month)
+  if (summary.blocked) throw new Error(summary.blocked)
+  const changes = deps.changes(tx)
+  if (summary.outcome === 'deleted') {
+    await deleteUnused(tx, changes, id)
+    return summary
+  }
+  // Hand the money back: each goal's balance, then what the category itself holds.
+  const note = `Removed category “${category.name}”`
+  const at = deps.now()
+  const give = (goalId: string | null, amount: number) =>
+    changes.insert('allocations', {
+      id: deps.newId(),
+      month,
+      category_id: id,
+      goal_id: goalId,
+      amount: -amount,
+      source: 'move',
+      note,
+      created_at: at,
+    })
+  let inGoals = 0
+  for (const goal of goals) {
+    if (goal.held !== 0) await give(goal.id, goal.held)
+    inGoals += goal.held
+    await changes.update('goals', goal.id, { archived: 1 })
+  }
+  if (available - inGoals !== 0) await give(null, available - inGoals)
+  await detach(tx, changes, id)
+  await changes.update('categories', id, { hidden: 1 })
+  return summary
 }
 
 export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): CategoriesApi {
@@ -511,39 +625,9 @@ export function categoriesApi({ adapter, newId, now, changes: log }: CrudDeps): 
       return adapter.transaction(async (tx) => (await planRemoval(tx, id, month)).summary)
     },
     async removeCategory(id, { month }) {
-      return adapter.transaction(async (tx) => {
-        const { summary, category, available, goals } = await planRemoval(tx, id, month)
-        if (summary.blocked) throw new Error(summary.blocked)
-        const changes = log(tx)
-        if (summary.outcome === 'deleted') {
-          await deleteUnused(tx, changes, id)
-          return summary
-        }
-        // Hand the money back: each goal's balance, then what the category itself holds.
-        const note = `Removed category “${category.name}”`
-        const at = now()
-        const give = (goalId: string | null, amount: number) =>
-          changes.insert('allocations', {
-            id: newId(),
-            month,
-            category_id: id,
-            goal_id: goalId,
-            amount: -amount,
-            source: 'move',
-            note,
-            created_at: at,
-          })
-        let inGoals = 0
-        for (const goal of goals) {
-          if (goal.held !== 0) await give(goal.id, goal.held)
-          inGoals += goal.held
-          await changes.update('goals', goal.id, { archived: 1 })
-        }
-        if (available - inGoals !== 0) await give(null, available - inGoals)
-        await detach(tx, changes, id)
-        await changes.update('categories', id, { hidden: 1 })
-        return summary
-      })
+      return adapter.transaction((tx) =>
+        removeCategoryIn(tx, { newId, now, changes: log }, id, month),
+      )
     },
     async reorderCategories(groupId, ids) {
       await adapter.transaction(async (tx) => {

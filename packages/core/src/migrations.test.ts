@@ -90,6 +90,15 @@ describe('migrations', () => {
     ])
   })
 
+  it('indexes the transfer pair lookup that listing transactions does per row', async () => {
+    const db = await openMemoryAdapter()
+    const plan = await db.query<{ detail: string }>(
+      `EXPLAIN QUERY PLAN SELECT account_id FROM transactions p
+         WHERE p.transfer_pair_id = 'x' AND p.id <> 'y'`,
+    )
+    expect(plan.map((r) => r.detail).join(' ')).toMatch(/USING INDEX transactions_transfer_pair/)
+  })
+
   it('exposes the latest version', () => {
     expect(LATEST_SCHEMA_VERSION).toBe(MIGRATIONS.length)
   })

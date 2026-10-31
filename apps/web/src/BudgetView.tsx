@@ -4,6 +4,7 @@ import { AssignedInput } from './AssignedInput.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
+import { fundPercent, fundStatus } from './fund-text.ts'
 import { holdingWarning } from './goal-text.ts'
 import { money, monthLabel, monthOf, shiftMonth, todayIso } from './format.ts'
 import { GoalForm, GoalRows } from './GoalRows.tsx'
@@ -37,6 +38,20 @@ export function BudgetView({ today }: { today: Date }) {
     [month],
   )
   const accounts = useBudgetQuery(() => budget.listAccounts())
+  // The emergency fund, if the household has one: its target averages Need spending up to the last
+  // complete month (or the open month when that is earlier), and its balance is the open month's.
+  const averageThrough =
+    month < shiftMonth(monthOf(todayIso(today)), -1)
+      ? month
+      : shiftMonth(monthOf(todayIso(today)), -1)
+  const fundQuery = useBudgetQuery(
+    () =>
+      budget
+        .getEmergencyFund({ month: averageThrough, asOf: month })
+        .then((fund) => ({ month, fund })),
+    [month, averageThrough],
+  )
+  const fund = fundQuery.data?.month === month ? fundQuery.data.fund : undefined
   const holdings = useBudgetQuery(() => budget.getAccountHoldings(month), [month])
   const [showHidden, setShowHidden] = useState(false)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
@@ -297,6 +312,23 @@ export function BudgetView({ today }: { today: Date }) {
                                     }
                                   >
                                     {tag}
+                                  </span>
+                                )}
+                                {fund?.settings.categoryId === c.id && (
+                                  <span className="fund-meter">
+                                    <span className="goal-status muted">
+                                      {fundStatus(fund).join(' · ')}
+                                    </span>
+                                    <span
+                                      className="goal-bar"
+                                      role="progressbar"
+                                      aria-label="Emergency fund funded"
+                                      aria-valuemin={0}
+                                      aria-valuemax={100}
+                                      aria-valuenow={fundPercent(fund)}
+                                    >
+                                      <span style={{ width: `${fundPercent(fund)}%` }} />
+                                    </span>
                                   </span>
                                 )}
                               </span>

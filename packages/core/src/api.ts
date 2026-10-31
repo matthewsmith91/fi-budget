@@ -2,6 +2,7 @@ import { accountsApi, type AccountsApi } from './accounts.ts'
 import { activityApi, type ActivityApi } from './activity.ts'
 import { allocationsApi, type AllocationsApi } from './allocations.ts'
 import { educationApi, type EducationApi } from './education.ts'
+import { emergencyDrawsApi, type EmergencyDrawsApi } from './emergency-draws.ts'
 import { emergencyFundApi, type EmergencyFundApi } from './emergency-fund.ts'
 import { exportJson, importJson, importSqlite } from './budget-file.ts'
 import { changeLog } from './changes.ts'
@@ -76,6 +77,7 @@ export interface BudgetApi
     RecurringApi,
     MonthlyReviewApi,
     EmergencyFundApi,
+    EmergencyDrawsApi,
     YnabApi {
   getStatus(): Promise<AppStatus>
   getHousehold(): Promise<Household | null>
@@ -157,6 +159,7 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...recurringApi(crud),
     ...monthlyReviewApi(crud),
     ...emergencyFundApi(crud),
+    ...emergencyDrawsApi(crud),
     ...ynabApi(crud),
     ...activityApi({ ...crud, deviceId, mode: sync ? 'sync' : 'local' }),
     async getStatus() {

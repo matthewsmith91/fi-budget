@@ -751,7 +751,7 @@ test('goals held in an account warn when they add up to more than the account ha
   await page.getByLabel('New category in Savings').fill('Emergency')
   await page.getByRole('button', { name: 'Add', exact: true }).click()
 
-  await page.getByRole('button', { name: new RegExp('^Emergency (Need|Want)') }).click()
+  await page.getByRole('button', { name: /^Emergency/ }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Add goal' }).click()
   await page.getByLabel('Goal name').fill('Six months')
   await page.getByLabel('Target amount').fill('5000')
@@ -847,29 +847,109 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   await expect(averages.getByRole('row', { name: /3 months/ })).toContainText('only 1 of history')
   await expect(averages.getByRole('row', { name: /3 months/ })).toContainText('$80.00')
 
-  // the emergency fund is a category sized against the average Need month ($80 here)
+  // the emergency fund is optional; made from here it becomes a category under Reserves, sized
+  // against the average Need month ($80 here)
+  const fund = page.getByRole('region', { name: 'Emergency fund' })
+  await expect(fund).toContainText('An emergency fund is optional')
+  await fund.getByRole('button', { name: 'Create emergency fund' }).click()
+  await expect(fund).toContainText('Months covered')
+
   await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
-  await page.getByRole('button', { name: 'Add category to Everyday' }).click()
-  await page.getByLabel('New category in Everyday').fill('Emergency Fund')
-  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Reserves', exact: true })).toBeVisible()
   await page.getByLabel('Assigned for Emergency Fund').fill('160')
   await page.getByLabel('Assigned for Emergency Fund').press('Enter')
   await expect(page.getByRole('row', { name: /^Emergency Fund/ })).toContainText('$160.00')
 
   await sidebar(page).getByRole('link', { name: 'Reports' }).click()
   await page.getByRole('button', { name: 'Next month' }).click()
-  const fund = page.getByRole('region', { name: 'Emergency fund' })
-  await expect(fund).toContainText('Pick the category that is your emergency fund')
-  await fund.getByLabel('Emergency fund category').selectOption({ label: 'Emergency Fund' })
-  await fund.getByLabel('Months of coverage').selectOption('6')
-  await fund.getByRole('button', { name: 'Save' }).click()
   await expect(fund).toContainText('$160.00')
   await expect(fund).toContainText('$480.00')
   await expect(fund.getByText('2.0', { exact: true })).toBeVisible()
 
-  // the choice survives a reload
+  // it survives a reload, and can be deleted again: the money goes back to Ready to Assign
   await page.reload()
-  await expect(page.getByRole('region', { name: 'Emergency fund' })).toContainText('Emergency Fund')
+  await expect(fund).toContainText('Emergency Fund')
+  await fund.getByRole('button', { name: 'Delete emergency fund…' }).click()
+  await expect(fund).toContainText('goes back to Ready to Assign')
+  await fund.getByRole('button', { name: 'Delete emergency fund', exact: true }).click()
+  await expect(fund).toContainText('An emergency fund is optional')
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await expect(page.getByLabel('Assigned for Emergency Fund')).toHaveCount(0)
+})
+
+test('an emergency expense is paid for from the emergency fund, and the report lists it', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Account type').selectOption('checking')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await page.getByLabel('Payee').fill('Paycheck')
+  await page.getByLabel('Inflow').fill('3000')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Paycheck/ })).toContainText('$3,000.00')
+
+  // with no fund, nothing offers the emergency tick
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await expect(page.getByLabel('Pay from the emergency fund')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Everyday')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Everyday' }).click()
+  await page.getByLabel('New category in Everyday').fill('Car repair')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await page.getByRole('button', { name: 'Create emergency fund' }).click()
+  await expect(page.getByRole('region', { name: 'Emergency fund' })).toContainText('Months covered')
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByLabel('Assigned for Emergency Fund').fill('1000')
+  await page.getByLabel('Assigned for Emergency Fund').press('Enter')
+  await expect(page.getByRole('row', { name: /^Emergency Fund/ })).toContainText('$1,000.00')
+
+  // the repair is spent from Car repair, but paid for from the fund
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await page.getByLabel('Payee').fill('Garage')
+  await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Car repair' })
+  await page.getByLabel('Outflow').fill('400')
+  await page.getByLabel('Pay from the emergency fund').check()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Garage/ })).toContainText('Emergency')
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await expect(page.getByRole('row', { name: /^Emergency Fund/ })).toContainText('$600.00')
+  const carRepair = page.getByRole('row', { name: /^Car repair/ })
+  await expect(carRepair).toContainText('-$400.00')
+  await expect(carRepair).toContainText('$0.00')
+
+  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  const emergencies = page.getByRole('region', { name: 'Emergencies' })
+  await expect(emergencies).toContainText('$400.00 came out of the fund for one emergency')
+  await expect(emergencies.getByRole('row', { name: /Garage/ })).toContainText('Car repair')
+  await expect(emergencies.getByRole('row', { name: /Garage/ })).toContainText('$600.00')
+
+  // not an emergency after all: the money goes back
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+  await page.getByRole('row', { name: /Garage/ }).click()
+  await page.getByLabel('Pay from the emergency fund').uncheck()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await expect(page.getByRole('row', { name: /^Emergency Fund/ })).toContainText('$1,000.00')
+  await expect(page.getByRole('row', { name: /^Car repair/ })).toContainText('-$400.00')
 })
 
 test('income rules: a paycheck feeds the tithe, and taking it back reverses that', async ({

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { budget } from './client.ts'
 import { useBudgetQuery } from './data.ts'
 import { EducationCard } from './EducationCard.tsx'
+import { EmergenciesCard } from './EmergenciesCard.tsx'
 import { EmergencyFundCard } from './EmergencyFundCard.tsx'
 import { money, monthLabel, monthOf, shiftMonth, todayIso } from './format.ts'
 import { NetWorthCard } from './NetWorthCard.tsx'
@@ -115,6 +116,8 @@ export function ReportsView({ today }: { today: Date }) {
       </section>
 
       <EmergencyFundCard month={month} today={today} />
+
+      <EmergenciesCard today={today} />
 
       <RothContributionsCard today={today} />
 

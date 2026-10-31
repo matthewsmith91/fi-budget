@@ -491,6 +491,32 @@ export const MIGRATIONS: readonly Migration[] = [
       )`,
     ],
   },
+  {
+    version: 19,
+    name: 'transfer-pair-index',
+    // Listing transactions looks up each transfer's other leg by `transfer_pair_id`. With no
+    // index that was a full scan per row, so a register of ~13k imported transactions took
+    // over 10 seconds to list.
+    up: [
+      `CREATE INDEX transactions_transfer_pair ON transactions(transfer_pair_id)
+         WHERE transfer_pair_id IS NOT NULL`,
+    ],
+  },
+  {
+    version: 20,
+    name: 'emergency-draws',
+    // A transaction marked as an emergency is paid for from the emergency fund: money moves
+    // from the fund's category into the transaction's own, so its category keeps the real
+    // spending. The moves are ordinary 'move' allocations that name the transaction
+    // (`source_transaction_id`) and the fund they came out of (`fund_category_id`, on both rows
+    // of the pair), so an edit or an unmark can find and reverse them and the report can total them.
+    up: [
+      `ALTER TABLE transactions ADD COLUMN emergency INTEGER NOT NULL DEFAULT 0
+         CHECK (emergency IN (0, 1))`,
+      `ALTER TABLE allocations ADD COLUMN fund_category_id TEXT`,
+      `CREATE INDEX transactions_emergency ON transactions(date) WHERE emergency = 1`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

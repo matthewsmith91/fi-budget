@@ -1735,3 +1735,22 @@ a.pill:hover {
     }
   }
 }
+
+/* the emergency fund's progress under its name in the budget */
+.fund-meter {
+  display: grid;
+  gap: 0.15rem;
+  margin-top: 0.15rem;
+  font-weight: normal;
+}
+
+.emergency-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tag.emergency {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}

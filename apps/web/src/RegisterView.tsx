@@ -38,6 +38,8 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
   const groups = useBudgetQuery(() => budget.listCategoryGroups())
   const goals = useBudgetQuery(() => budget.listGoals())
   const balances = useBudgetQuery(() => budget.getAccountBalances())
+  const fundSettings = useBudgetQuery(() => budget.getEmergencyFundSettings())
+  const hasFund = !!fundSettings.data?.categoryId
   // 'new' is the blank entry row; otherwise the id of the transaction being edited
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -199,6 +201,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                 goals={goals.data ?? []}
                 payees={payees}
                 deposits={deposits}
+                hasFund={hasFund}
                 onCancel={() => setEditing(null)}
                 onSave={(input) =>
                   run(() =>
@@ -209,6 +212,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                       splits: input.splits,
                       grossAmount: input.grossAmount,
                       reversesId: input.reversesId,
+                      emergency: input.emergency,
                     }),
                   ).then(() => undefined)
                 }
@@ -226,6 +230,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                   goals={goals.data ?? []}
                   payees={payees}
                   deposits={deposits}
+                  hasFund={hasFund}
                   onCancel={() => setEditing(null)}
                   transfer={transferInfo(t, accountById)}
                   onSave={async (input) => {
@@ -243,6 +248,7 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                           splits: input.splits,
                           grossAmount: input.grossAmount,
                           reversesId: input.reversesId,
+                          emergency: input.emergency,
                         }
                     await run(() => budget.updateTransaction(t.id, patch))
                     setEditing(null)
@@ -267,6 +273,14 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                   {showAccountColumn && <td>{accountById.get(t.accountId)?.name ?? ''}</td>}
                   <td>
                     {payeeLabel(t, accountById)}
+                    {t.emergency && (
+                      <>
+                        {' '}
+                        <span className="tag emergency" title="Paid for from the emergency fund">
+                          Emergency
+                        </span>
+                      </>
+                    )}
                     {!t.approved && (
                       <>
                         {' '}
@@ -409,6 +423,8 @@ interface Entry {
   grossAmount: number | null
   /** The deposit this outflow takes back; null for none. */
   reversesId: string | null
+  /** Paid for from the emergency fund. */
+  emergency: boolean
 }
 
 /** A split line as typed: a category and an amount in either the outflow or inflow box. */
@@ -461,6 +477,8 @@ function TransactionRow(props: {
   payees: string[]
   /** Income that an outflow could take back (a reversed paycheck). */
   deposits: Transaction[]
+  /** Whether the household has an emergency fund to pay from. */
+  hasFund: boolean
   onCancel: () => void
   onSave: (entry: Entry) => Promise<void>
   onDelete?: () => Promise<void>
@@ -475,6 +493,7 @@ function TransactionRow(props: {
   const [split, setSplit] = useState(lines.length > 1)
   const [gross, setGross] = useState(t?.grossAmount ? plain(t.grossAmount) : '')
   const [reversesId, setReversesId] = useState(t?.reversesId ?? '')
+  const [emergency, setEmergency] = useState(t?.emergency ?? false)
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<typeof fields>) => setFields({ ...fields, ...patch })
   const setLine = (i: number, patch: Partial<Line>) =>
@@ -494,6 +513,11 @@ function TransactionRow(props: {
     account?.onBudget !== false &&
     total < 0 &&
     (reversible.length > 0 || !!reversesId)
+
+  // Rare, so it sits quietly among the editor's buttons. It can always be switched off; switching
+  // on needs a fund and spending from a budget account.
+  const showEmergency =
+    !props.transfer && account?.onBudget !== false && (props.hasFund || !!t?.emergency)
 
   function toggleSplit() {
     setError(null)
@@ -548,6 +572,7 @@ function TransactionRow(props: {
         splits,
         grossAmount,
         reversesId: showReverses ? reversesId || null : null,
+        emergency: showEmergency && emergency,
       })
       if (!t) {
         setFields({ ...fields, payee: '' })
@@ -555,6 +580,7 @@ function TransactionRow(props: {
         setSplit(false)
         setGross('')
         setReversesId('')
+        setEmergency(false)
       }
     } catch (err) {
       setError(messageOf(err))
@@ -787,6 +813,20 @@ function TransactionRow(props: {
                   </option>
                 ))}
               </select>
+            </label>
+          )}
+          {showEmergency && (
+            <label
+              className="inline-field emergency-toggle"
+              title="Moves the money from the emergency fund into this category"
+            >
+              <input
+                type="checkbox"
+                aria-label="Pay from the emergency fund"
+                checked={emergency}
+                onChange={(e) => setEmergency(e.target.checked)}
+              />
+              Emergency
             </label>
           )}
           <span className="spacer" />

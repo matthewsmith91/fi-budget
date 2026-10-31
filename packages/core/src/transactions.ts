@@ -2,6 +2,7 @@ import { assertGoalUsable } from './allocations.ts'
 import type { ChangeLog } from './changes.ts'
 import { assertNeedOrWant, type NeedOrWant } from './categories.ts'
 import { assertDate, flag, type CrudDeps } from './crud.ts'
+import { currentFund, settleEmergency } from './emergency-draws.ts'
 import { settleIncome } from './income-rules.ts'
 import { cents } from './money.ts'
 import type { SqlRunner } from './storage.ts'
@@ -43,6 +44,11 @@ export interface Transaction {
   grossAmount: number | null
   /** The deposit this outflow takes back (a reversed paycheck); null otherwise. */
   reversesId: string | null
+  /**
+   * Paid for from the emergency fund: each categorized line is moved from the fund into its
+   * category, so the category keeps the real spending. Only on a budget account, never a transfer.
+   */
+  emergency: boolean
   splits: TransactionSplit[]
 }
 
@@ -74,6 +80,8 @@ interface NewTransactionBase {
   grossAmount?: number | null
   /** Marks an outflow as taking back this deposit, which reverses what income rules gave it. */
   reversesId?: string | null
+  /** Pays for it from the emergency fund (see `Transaction.emergency`); needs a fund. */
+  emergency?: boolean
 }
 
 export type NewTransaction = NewTransactionBase &
@@ -104,6 +112,8 @@ export interface TransactionPatch {
   grossAmount?: number | null
   /** Marks this outflow as taking back a deposit; null unlinks it. */
   reversesId?: string | null
+  /** Pays for it from the emergency fund, or stops; marking needs a fund and a budget account. */
+  emergency?: boolean
   /** Changes the single split; refused on a transaction with several. */
   categoryId?: string | null
   /**
@@ -179,6 +189,7 @@ interface TransactionRow {
   transfer_account_id: string | null
   gross_amount: number | null
   reverses_id: string | null
+  emergency: number
 }
 
 interface SplitRow {
@@ -298,7 +309,7 @@ export async function loadTransactions(
 ): Promise<Transaction[]> {
   const rows = await db.query<TransactionRow & Record<string, never>>(
     `SELECT id, account_id, date, payee, amount, cleared, reconciled, approved, import_id,
-       transfer_pair_id, gross_amount, reverses_id,
+       transfer_pair_id, gross_amount, reverses_id, emergency,
        (SELECT p.account_id FROM transactions p
          WHERE p.transfer_pair_id = t.transfer_pair_id AND p.id <> t.id) AS transfer_account_id
      FROM transactions t ${where} ORDER BY date DESC, created_at DESC, id DESC`,
@@ -337,6 +348,7 @@ export async function loadTransactions(
     transferAccountId: r.transfer_account_id,
     grossAmount: r.gross_amount,
     reversesId: r.reverses_id,
+    emergency: r.emergency === 1,
     splits: byTransaction.get(r.id) ?? [],
   }))
 }
@@ -365,8 +377,17 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     return row?.on_budget === 1
   }
 
+  /** Marking a transaction as an emergency needs a fund to pay from and a budget account. */
+  async function assertCanMark(db: SqlRunner, accountId: string) {
+    if (!(await onBudget(db, accountId))) {
+      throw new Error('Only spending from a budget account can be an emergency')
+    }
+    if (!(await currentFund(db))) throw new Error('Start an emergency fund first')
+  }
+
   /** Changes to one leg of a transfer; the amount carries over to the other leg. */
   async function updateLeg(tx: SqlRunner, current: Transaction, patch: TransactionPatch) {
+    if (patch.emergency) throw new Error('A transfer can’t be an emergency')
     if (patch.payee !== undefined || patch.splits) {
       throw new Error('A transfer has no payee and can’t be split')
     }
@@ -437,7 +458,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
     },
 
     async createTransaction(input) {
-      const { accountId, date, payee, cleared, grossAmount, reversesId } = input
+      const { accountId, date, payee, cleared, grossAmount, reversesId, emergency } = input
       const lines: SplitInput[] = input.splits ?? [
         {
           categoryId: input.categoryId || null,
@@ -462,6 +483,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         if (!account) throw new Error('Account not found')
         if (account.closed === 1) throw new Error('This account is closed')
         await assertCategoriesExist(tx, lines)
+        if (emergency) await assertCanMark(tx, accountId)
         const id = newId()
         const at = now()
         const changes = log(tx)
@@ -476,6 +498,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           reconciled: 0,
           gross_amount: grossAmount ?? null,
           reverses_id: reversesId || null,
+          emergency: flag(emergency ?? false),
           created_at: at,
         })
         for (const line of lines) {
@@ -490,6 +513,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           })
         }
         await settleIncome(tx, changes, at, [id, reversesId])
+        await settleEmergency(tx, changes, at, [id])
         await settleUnits(tx, changes, at, [id])
         return get(tx, id)
       })
@@ -586,6 +610,8 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         const reversesId =
           patch.reversesId === undefined ? current.reversesId : patch.reversesId || null
         if (reversesId) await assertReversible(tx, amount ?? current.amount, reversesId, id)
+        // Unmarking is always allowed; marking needs a fund (an already marked one may be edited).
+        if (patch.emergency && !current.emergency) await assertCanMark(tx, current.accountId)
         await changes.update('transactions', id, {
           date: patch.date ?? current.date,
           payee: patch.payee === undefined ? current.payee : cleanPayee(patch.payee),
@@ -593,6 +619,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
           cleared: flag(patch.cleared ?? current.cleared),
           gross_amount: patch.grossAmount === undefined ? current.grossAmount : patch.grossAmount,
           reverses_id: reversesId,
+          emergency: flag(patch.emergency ?? current.emergency),
         })
         if (patch.splits) {
           await assertCategoriesExist(tx, patch.splits, goalsOf(current))
@@ -625,6 +652,7 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
             await changes.delete('transaction_splits', extra.id)
           }
           await settleIncome(tx, changes, now(), [id, current.reversesId, reversesId])
+          await settleEmergency(tx, changes, now(), [id])
           await settleUnits(tx, changes, now(), [id])
           return get(tx, id)
         }
@@ -676,6 +704,8 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         if (touchesIncome) {
           await settleIncome(tx, changes, now(), [id, current.reversesId, reversesId])
         }
+        // Marking, dating, re-categorizing or re-amounting an emergency moves its draw.
+        await settleEmergency(tx, changes, now(), [id])
         // Clearing, dating or re-amounting a dividend moves its units.
         await settleUnits(tx, changes, now(), [id])
         return get(tx, id)
@@ -699,6 +729,8 @@ export function transactionsApi({ adapter, newId, now, changes: log }: CrudDeps)
         // A deposit that is gone gives back what the rules assigned; a deleted reversal
         // gives its deposit's share back.
         await settleIncome(tx, changes, now(), [current.id, current.reversesId])
+        // An emergency that is gone gives its draw back to the fund.
+        await settleEmergency(tx, changes, now(), [current.id])
         // Units a deleted contribution bought go with it.
         await settleUnits(tx, changes, now(), [current.id, partner?.id])
       })

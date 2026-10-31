@@ -1,4 +1,10 @@
 import { assertMonth, monthBalances, type Month } from './allocations.ts'
+import {
+  ensureEmergencyFundCategory,
+  removeCategoryIn,
+  tidyReservesGroup,
+  type CategoryRemoval,
+} from './categories.ts'
 import type { CrudDeps } from './crud.ts'
 import { averageNeedsWants, loadSpending } from './reports.ts'
 import type { SqlRunner } from './storage.ts'
@@ -41,8 +47,26 @@ export interface EmergencyFundApi {
    * average can stop at the last complete month while the balance is today's.
    */
   getEmergencyFund(input: { month?: Month; asOf: Month }): Promise<EmergencyFund>
+  /** Just the saved settings: whether there is a fund, without working out its figures. */
+  getEmergencyFundSettings(): Promise<EmergencyFundSettings>
   /** Picks the category and the coverage and averaging settings; returns what is now saved. */
   setEmergencyFund(input: EmergencyFundSettings): Promise<EmergencyFundSettings>
+  /**
+   * Starts the emergency fund: a new "Emergency Fund" category in the Reserves group, or
+   * `categoryId` if the household already has one. Refused while there is a fund. Coverage and
+   * averaging keep their saved values unless given.
+   */
+  createEmergencyFund(input?: {
+    categoryId?: string
+    months?: number
+    window?: number
+  }): Promise<EmergencyFundSettings>
+  /**
+   * Ends the emergency fund by taking its category out of the budget (see `removeCategory`: its
+   * money goes back to Ready to Assign in `month`). The coverage and averaging settings stay for
+   * next time. Refused while the fund is overspent.
+   */
+  deleteEmergencyFund(input: { month: Month }): Promise<CategoryRemoval>
 }
 
 function assertRange(value: number, range: { min: number; max: number }, what: string) {
@@ -70,7 +94,8 @@ export function emergencyFundFigures(
   }
 }
 
-export function emergencyFundApi({ adapter, changes: log }: CrudDeps): EmergencyFundApi {
+export function emergencyFundApi(deps: CrudDeps): EmergencyFundApi {
+  const { adapter, changes: log } = deps
   async function readSettings(db: SqlRunner): Promise<EmergencyFundSettings & { id: string }> {
     const [h] = await db.query<{
       id: string
@@ -86,7 +111,25 @@ export function emergencyFundApi({ adapter, changes: log }: CrudDeps): Emergency
     return { id: h.id, categoryId: h.category_id, months: h.months, window: h.window }
   }
 
+  async function assertUsable(db: SqlRunner, categoryId: string) {
+    const [category] = await db.query<{ credit_card_account_id: string | null }>(
+      'SELECT credit_card_account_id FROM categories WHERE id = ?',
+      [categoryId],
+    )
+    if (!category) throw new Error('Category not found')
+    if (category.credit_card_account_id) {
+      throw new Error('A credit card payment category can’t be the emergency fund')
+    }
+  }
+
   return {
+    async getEmergencyFundSettings() {
+      return adapter.transaction(async (tx) => {
+        const { id: _id, ...settings } = await readSettings(tx)
+        return settings
+      })
+    },
+
     async getEmergencyFund({ month, asOf }) {
       assertMonth(asOf)
       const through = month ?? asOf
@@ -111,22 +154,45 @@ export function emergencyFundApi({ adapter, changes: log }: CrudDeps): Emergency
       assertRange(window, WINDOW_RANGE, 'The averaging window')
       return adapter.transaction(async (tx) => {
         const current = await readSettings(tx)
-        if (categoryId && categoryId !== current.categoryId) {
-          const [category] = await tx.query<{ credit_card_account_id: string | null }>(
-            'SELECT credit_card_account_id FROM categories WHERE id = ?',
-            [categoryId],
-          )
-          if (!category) throw new Error('Category not found')
-          if (category.credit_card_account_id) {
-            throw new Error('A credit card payment category can’t be the emergency fund')
-          }
-        }
+        if (categoryId && categoryId !== current.categoryId) await assertUsable(tx, categoryId)
         await log(tx).update('households', current.id, {
           emergency_fund_category_id: categoryId || null,
           emergency_fund_months: months,
           emergency_fund_window: window,
         })
         return { categoryId: categoryId || null, months, window }
+      })
+    },
+
+    async createEmergencyFund({ categoryId, months, window } = {}) {
+      return adapter.transaction(async (tx) => {
+        const current = await readSettings(tx)
+        if (current.categoryId) throw new Error('There is already an emergency fund')
+        const nextMonths = months ?? current.months
+        const nextWindow = window ?? current.window
+        assertRange(nextMonths, COVERAGE_RANGE, 'Months of coverage')
+        assertRange(nextWindow, WINDOW_RANGE, 'The averaging window')
+        const changes = log(tx)
+        let chosen = categoryId
+        if (chosen) await assertUsable(tx, chosen)
+        else chosen = await ensureEmergencyFundCategory(tx, changes, deps.now())
+        await changes.update('households', current.id, {
+          emergency_fund_category_id: chosen,
+          emergency_fund_months: nextMonths,
+          emergency_fund_window: nextWindow,
+        })
+        return { categoryId: chosen, months: nextMonths, window: nextWindow }
+      })
+    },
+
+    async deleteEmergencyFund({ month }) {
+      assertMonth(month)
+      return adapter.transaction(async (tx) => {
+        const { categoryId } = await readSettings(tx)
+        if (!categoryId) throw new Error('There is no emergency fund')
+        const removal = await removeCategoryIn(tx, deps, categoryId, month)
+        await tidyReservesGroup(tx, log(tx))
+        return removal
       })
     },
   }

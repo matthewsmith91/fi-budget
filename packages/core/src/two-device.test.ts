@@ -920,3 +920,47 @@ describe('retirement planning on two devices', () => {
     expect(shared).toMatchObject({ retirementStatus: 'changes', retirementMultiplier: 1.5 })
   })
 })
+
+describe('emergency draws on two devices', () => {
+  it('moves the money once when both devices mark the same transaction offline', async () => {
+    await a.api.createHousehold({ name: 'Smiths', members: ['Matt', 'Jessica'] })
+    await a.api.createEmergencyFund()
+    await a.api.allocate({ month: OCT, categoryId: 'emergency-fund', amount: 100_000 })
+    const t = await a.api.createTransaction({
+      accountId: checking,
+      date: '2026-10-12',
+      payee: 'Garage',
+      categoryId: groceries,
+      amount: -30_000,
+    })
+    await converge()
+    await a.api.updateTransaction(t.id, { emergency: true })
+    await b.api.updateTransaction(t.id, { emergency: true })
+    await converge()
+    const fund = (await a.api.getMonthBalances(OCT)).find((x) => x.categoryId === 'emergency-fund')
+    expect(fund?.available).toBe(70_000)
+    const drawn = (await a.api.listAllocations({ categoryId: groceries })).filter(
+      (x) => x.source === 'move',
+    )
+    expect(drawn.map((x) => x.amount)).toEqual([30_000])
+  })
+
+  it('gives the money back once when both devices unmark it offline', async () => {
+    await a.api.createHousehold({ name: 'Smiths', members: ['Matt', 'Jessica'] })
+    await a.api.createEmergencyFund()
+    await a.api.allocate({ month: OCT, categoryId: 'emergency-fund', amount: 100_000 })
+    const t = await a.api.createTransaction({
+      accountId: checking,
+      date: '2026-10-12',
+      categoryId: groceries,
+      amount: -30_000,
+      emergency: true,
+    })
+    await converge()
+    await a.api.updateTransaction(t.id, { emergency: false })
+    await b.api.updateTransaction(t.id, { emergency: false })
+    await converge()
+    const fund = (await a.api.getMonthBalances(OCT)).find((x) => x.categoryId === 'emergency-fund')
+    expect(fund?.available).toBe(100_000)
+  })
+})
