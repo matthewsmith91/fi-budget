@@ -14,6 +14,11 @@ export interface RegisterRow {
   /** Null for money into Ready to Assign, for transfers and for a card's payment category. */
   group: string | null
   category: string | null
+  /**
+   * True when YNAB put the line in the budget: it has a category, a split marker, or is
+   * money into Ready to Assign or a card payment. A tracking account's own lines never do.
+   */
+  inBudget: boolean
   memo: string
   /** Integer cents; negative is money out. */
   amount: number
@@ -102,7 +107,8 @@ export function parseYnabAmount(raw: string): number {
 }
 
 function detectDateOrder(dates: string[]): { order: DateOrder; ambiguous: boolean } {
-  if (dates.every((d) => /^\d{4}-\d\d-\d\d$/.test(d))) return { order: 'YMD', ambiguous: false }
+  if (dates.every((d) => /^\d{4}[/.-]\d{1,2}[/.-]\d{1,2}$/.test(d)))
+    return { order: 'YMD', ambiguous: false }
   const parts = dates.map((d) => d.split(/[/.-]/).map(Number))
   if (parts.some(([a]) => a! > 12)) return { order: 'DMY', ambiguous: false }
   if (parts.some(([, b]) => b! > 12)) return { order: 'MDY', ambiguous: false }
@@ -117,8 +123,9 @@ function toIsoDate(raw: string, order: DateOrder): string {
   const [a, b, c] = parts as [string, string, string]
   const [y, m, d] = order === 'YMD' ? [a, b, c] : order === 'MDY' ? [c, a, b] : [c, b, a]
   const iso = `${y.padStart(4, '0')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-  if (!new Date(`${iso}T00:00:00Z`).toISOString().startsWith(iso)) {
-    throw new Error(`"${raw}" is not a date`)
+  const parsed = new Date(`${iso}T00:00:00Z`)
+  if (Number.isNaN(parsed.getTime()) || !parsed.toISOString().startsWith(iso)) {
+    throw new Error(`"${raw}" is not a date (read as ${order})`)
   }
   return iso
 }
@@ -191,6 +198,7 @@ export function parseRegister(text: string, forcedOrder?: DateOrder): ParsedRegi
         payee: cell(line, col.payee).trim(),
         group,
         category,
+        inBudget: [col.group, col.category, col.combined].some((i) => cell(line, i).trim() !== ''),
         memo: cell(line, col.memo).trim(),
         amount: parseYnabAmount(cell(line, col.inflow)) - parseYnabAmount(cell(line, col.outflow)),
         cleared: clearedOf(cell(line, col.cleared)),
@@ -221,20 +229,21 @@ function parseMonth(raw: string): string {
   throw new Error(`Cannot read the month "${raw}"`)
 }
 
-/** Reads YNAB's Budget.csv. Rows for YNAB's own groups (Ready to Assign, card payments) are left out. */
+/** Reads YNAB's Budget.csv (called Plan.csv in newer exports). Rows for YNAB's own groups (Ready to Assign, card payments) are left out. */
 export function parseBudget(text: string): BudgetRow[] {
   const [header, ...lines] = parseCsv(text)
   if (!header) throw new Error('The budget file is empty')
   const col = {
     month: headerIndex(header, 'month'),
     ...categoryColumns(header),
-    budgeted: headerIndex(header, 'budgeted'),
+    // newer exports call the file Plan.csv and the column Assigned
+    budgeted: headerIndex(header, 'budgeted', 'assigned'),
     activity: headerIndex(header, 'activity'),
     available: headerIndex(header, 'available'),
   }
   if (col.month === -1 || col.budgeted === -1) {
     throw new Error(
-      'This does not look like YNAB’s Budget.csv (it needs Month and Budgeted columns)',
+      'This does not look like YNAB’s Budget.csv (it needs Month and Budgeted or Assigned columns)',
     )
   }
   const cell = (line: string[], i: number) => (i === -1 ? '' : (line[i] ?? ''))

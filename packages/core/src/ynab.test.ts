@@ -78,6 +78,12 @@ describe('previewYnabImport', () => {
       ['Visa', 2, 0, null],
       ['Brokerage', 1, 20000, null],
     ])
+    // Only Brokerage has no line YNAB put in the budget.
+    expect(p.accounts.map((a) => [a.name, a.tracking])).toEqual([
+      ['Checking', false],
+      ['Visa', false],
+      ['Brokerage', true],
+    ])
     expect(p.warnings.join(' ')).toMatch(/Memos are not imported/)
     expect(p.warnings.join(' ')).toMatch(/1 transfer has no matching/)
     expect(p.warnings.join(' ')).toMatch(/1 line with no amount/)

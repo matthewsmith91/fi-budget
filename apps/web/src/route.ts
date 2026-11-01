@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { filterHref, monthFilter, parseFilter, type RegisterFilter } from './register-filter.ts'
 
 export type Route =
-  | { view: 'budget' }
-  | { view: 'accounts' }
+  /** `month` is null for the current month, which keeps following today. */
+  | { view: 'budget'; month: string | null }
+  | { view: 'accounts'; filter: RegisterFilter }
   | { view: 'account'; id: string }
   | { view: 'inbox' }
   | { view: 'activity' }
@@ -32,25 +34,35 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]['id'] | null
 
 export function parseRoute(hash: string): Route {
   // `#/settings/household?code=…` is a pairing link; the query is not part of the route
-  const [, first, id] = hash.split('?')[0]!.split('/')
-  if (first === 'accounts')
-    return id ? { view: 'account', id: decodeURIComponent(id) } : { view: 'accounts' }
+  const [path = '', query] = hash.split('?')
+  const [, first, id] = path.split('/')
+  const monthOf = (value: string | undefined) => (/^\d{4}-\d{2}$/.test(value ?? '') ? value! : null)
+  if (first === 'accounts') {
+    if (id) return { view: 'account', id: decodeURIComponent(id) }
+    return { view: 'accounts', filter: parseFilter(query ?? '') }
+  }
   if (first === 'inbox') return { view: 'inbox' }
   if (first === 'activity') return { view: 'activity' }
   if (first === 'reports') return { view: 'reports' }
   if (first === 'bills') return { view: 'bills' }
-  if (first === 'review')
-    return { view: 'review', month: /^\d{4}-\d{2}$/.test(id ?? '') ? id! : null }
+  if (first === 'review') return { view: 'review', month: monthOf(id) }
   if (first === 'settings') {
     const section = SETTINGS_SECTIONS.find((s) => s.id === id)
     return { view: 'settings', section: section?.id ?? null }
   }
-  return { view: 'budget' }
+  return { view: 'budget', month: first === 'budget' ? monthOf(id) : null }
 }
 
 export const hrefFor = {
   budget: '#/budget',
+  /** The budget open on one month; the current month is plain `budget`. */
+  budgetFor: (month: string) => `#/budget/${month}`,
   accounts: '#/accounts',
+  /** All Accounts narrowed to one category's transactions in a month. */
+  categoryActivity: (categoryId: string, month: string) =>
+    filterHref(monthFilter(categoryId, month)),
+  /** All Accounts with a filter applied. */
+  accountsFiltered: filterHref,
   account: (id: string) => `#/accounts/${encodeURIComponent(id)}`,
   inbox: '#/inbox',
   activity: '#/activity',

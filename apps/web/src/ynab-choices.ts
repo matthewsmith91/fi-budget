@@ -20,9 +20,16 @@ export function guessAccount(name: string): { type: AccountType; onBudget: boole
   return { type: 'checking', onBudget: true }
 }
 
-/** Starts from the account that already has this name, if there is an open one, else a new one. */
+/**
+ * Starts from the account that already has this name, if there is an open one, else a new one.
+ * What the file shows beats what the name suggests: an account YNAB kept out of the budget
+ * (a mortgage, a bond, a pension) starts as tracking, so a categorized transfer into it is
+ * spending from its category as it was in YNAB.
+ */
 export function defaultChoice(account: YnabAccountPreview): Choice {
-  const { type, onBudget } = guessAccount(account.name)
+  const guess = guessAccount(account.name)
+  const type = guess.type
+  const onBudget = account.tracking ? false : guess.onBudget
   const match = account.match
   return match && !match.closed
     ? { mode: 'existing', accountId: match.accountId, type, onBudget }

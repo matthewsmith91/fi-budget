@@ -44,9 +44,16 @@ export function shortDate(isoDate: string): string {
   return `${m}/${d}/${y}`
 }
 
-/** Accepts `10/28/2026`, `10/28/26`, `10/28` (this year) or `2026-10-28`; null if not a real date. */
+/**
+ * Accepts `10/28/2026`, `10/28/26`, `10/28` (this year), `2026-10-28`, `today` or `yesterday`;
+ * null if not a real date.
+ */
 export function parseDate(text: string, now = new Date()): string | null {
   const t = text.trim()
+  const word = t.toLowerCase()
+  if (word === 'today') return todayIso(now)
+  if (word === 'yesterday')
+    return todayIso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
   let y: number, m: number, d: number
   let match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t)
   if (match) [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])]

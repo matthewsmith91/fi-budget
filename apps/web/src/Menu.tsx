@@ -4,6 +4,8 @@ export interface MenuItem {
   label: string
   onSelect: () => void
   disabled?: boolean
+  /** Shown on hover; say why an item is disabled. */
+  title?: string
 }
 
 /** A "⋯" button with a dropdown of actions; closes on selection, Escape or an outside click. */
@@ -45,6 +47,7 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
                 type="button"
                 role="menuitem"
                 disabled={item.disabled}
+                title={item.title}
                 onClick={() => {
                   setOpen(false)
                   item.onSelect()

@@ -154,6 +154,49 @@ describe('getNeedsWantsReport', () => {
     expect(r.months[0]).toMatchObject({ need: 0, want: 20_000 })
   })
 
+  it('narrows to one category, counting a split by its matching lines only', async () => {
+    const { api, rent, fun, checking } = await makeApi()
+    await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-09-02',
+      categoryId: fun.id,
+      amount: -4_000,
+    })
+    await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-10-02',
+      categoryId: rent.id,
+      amount: -100_000,
+    })
+    await api.createTransaction({
+      accountId: checking.id,
+      date: '2026-10-04',
+      splits: [
+        { categoryId: rent.id, amount: -8_000 },
+        { categoryId: fun.id, amount: -1_500 },
+      ],
+    })
+    const fun1 = await api.getNeedsWantsReport({
+      month: '2026-10',
+      months: 2,
+      categoryId: fun.id,
+    })
+    expect(fun1.months).toEqual([
+      { month: '2026-09', need: 0, want: 4_000 },
+      { month: '2026-10', need: 0, want: 1_500 },
+    ])
+    const rent1 = await api.getNeedsWantsReport({
+      month: '2026-10',
+      months: 2,
+      categoryId: rent.id,
+    })
+    // rent's history starts in October, so its 3-month average is over one month
+    expect(rent1.averages[0]).toEqual({ window: 3, months: 1, need: 108_000, want: 0 })
+    const none = await api.getNeedsWantsReport({ month: '2026-10', categoryId: 'nope' })
+    expect(none.months.every((m) => m.need === 0 && m.want === 0)).toBe(true)
+    expect(none.averages[0]).toMatchObject({ months: 0 })
+  })
+
   it('averages trailing months and rejects a bad window', async () => {
     const { api, rent, checking } = await makeApi()
     for (const [date, amount] of [

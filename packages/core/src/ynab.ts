@@ -31,6 +31,12 @@ export interface YnabAccountPreview {
   balance: number
   first: string
   last: string
+  /**
+   * True when none of the account's own lines are in the budget, which is how YNAB's export
+   * shows a tracking (off-budget) account such as a mortgage, bond or retirement account.
+   * Only the budget side of a transfer into it carries a category.
+   */
+  tracking: boolean
   /** An account here with the same name, the likely target. */
   match: { accountId: string; closed: boolean; hasTransactions: boolean } | null
 }
@@ -165,9 +171,11 @@ export function ynabApi(deps: CrudDeps): YnabApi {
           balance: 0,
           first: r.date,
           last: r.date,
+          tracking: true,
           match: null,
         }
         if (counts) found.transactions++
+        if (r.inBudget) found.tracking = false
         found.balance += r.amount
         if (r.date < found.first) found.first = r.date
         if (r.date > found.last) found.last = r.date

@@ -28,6 +28,15 @@ async function openSettings(page: Page, section?: (typeof SETTINGS_SECTIONS)[num
   ).toBeVisible()
 }
 
+/**
+ * Picks a category in the register's editor: types to narrow the list, then takes the best match.
+ * (The filter bar has a "Category" select of its own, so this names the editor's field exactly.)
+ */
+async function chooseCategory(page: Page, label: string, name: string) {
+  await page.locator(`input.combobox[aria-label="${label}"]`).fill(name)
+  await page.locator('.combo-list [role="option"]', { hasText: name }).first().click()
+}
+
 async function backToBudget(page: Page) {
   await page.getByRole('link', { name: '← Back to budget' }).click()
 }
@@ -152,7 +161,7 @@ test('budget, accounts and the ledger work together and persist', async ({ page 
 
   // add an account with a starting balance; it opens on its register
   async function addAccount(name: string, type: string, balance: string) {
-    await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+    await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
     const dialog = page.getByRole('dialog')
     await dialog.getByLabel('Account name').fill(name)
     await dialog.getByLabel('Account type').selectOption(type)
@@ -195,7 +204,7 @@ test('budget, accounts and the ledger work together and persist', async ({ page 
     .click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Landlord')
-  await page.getByLabel('Category').selectOption({ label: 'Rent' })
+  await chooseCategory(page, 'Category', 'Rent')
   await page.getByLabel('Outflow').fill('250')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Landlord/ })).toContainText('$250.00')
@@ -244,7 +253,7 @@ test('a transaction can be split across categories, on desktop and on a phone', 
 }) => {
   await page.goto('/')
   await setUpHousehold(page)
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Account type').selectOption('checking')
@@ -268,9 +277,9 @@ test('a transaction can be split across categories, on desktop and on a phone', 
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Target')
   await page.getByRole('button', { name: 'Split', exact: true }).click()
-  await page.getByLabel('Category 1').selectOption({ label: 'Groceries' })
+  await chooseCategory(page, 'Category 1', 'Groceries')
   await page.getByLabel('Outflow 1').fill('30')
-  await page.getByLabel('Category 2').selectOption({ label: 'Household' })
+  await chooseCategory(page, 'Category 2', 'Household')
   await page.getByLabel('Outflow 2').fill('12.50')
 
   // a line without an amount is refused and nothing is saved
@@ -313,17 +322,116 @@ test('a transaction can be split across categories, on desktop and on a phone', 
   expect(payeeBox!.width).toBeGreaterThan(280)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0)
   await page.getByLabel('Payee').fill('Phone purchase')
-  await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Groceries' })
+  await chooseCategory(page, 'Category', 'Groceries')
   await page.getByLabel('Outflow', { exact: true }).fill('5')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Phone purchase/ })).toContainText('$5.00')
+})
+
+test('the register is quick to type into, searchable, and careful with unsaved typing', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Account type').selectOption('checking')
+  await dialog.getByLabel('Current balance').fill('1000')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Home')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  for (const name of ['Groceries', 'Household']) {
+    await page.getByRole('button', { name: 'Add category to Home' }).click()
+    await page.getByLabel('New category in Home').fill(name)
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(page.getByRole('row', { name: new RegExp(name) })).toBeVisible()
+  }
+  await sidebar(page)
+    .getByRole('link', { name: /Checking/ })
+    .click()
+
+  // the date takes words, and shows the date it understood
+  await page.getByRole('button', { name: '+ Add Transaction' }).click()
+  await page.getByLabel('Date').fill('yesterday')
+  await page.getByLabel('Payee').focus()
+  await expect(page.getByLabel('Date')).toHaveValue(/^\d\d\/\d\d\/\d{4}$/)
+
+  // a category is found by typing and taken with Enter; Enter again saves, and the form is
+  // ready for the next entry with the cursor back on the payee
+  await page.getByLabel('Payee').fill('Kroger')
+  const category = page.locator('input.combobox[aria-label="Category"]')
+  await category.fill('groc')
+  await category.press('Enter')
+  await expect(category).toHaveValue('Groceries')
+  // typing in one amount box empties the other
+  await page.getByLabel('Inflow').fill('5')
+  await page.getByLabel('Outflow', { exact: true }).fill('20')
+  await expect(page.getByLabel('Inflow')).toHaveValue('')
+  await page.getByLabel('Outflow', { exact: true }).press('Enter')
+  await expect(page.getByRole('row', { name: /Kroger/ })).toContainText('$20.00')
+  await expect(page.getByLabel('Payee')).toBeFocused()
+  await expect(page.getByLabel('Payee')).toHaveValue('')
+
+  await page.getByLabel('Payee').fill('Shell')
+  await chooseCategory(page, 'Category', 'Household')
+  await page.getByLabel('Outflow', { exact: true }).fill('35')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('row', { name: /Shell/ })).toContainText('$35.00')
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  // search looks through the payee, the category and the amount
+  const summary = page.getByRole('status').filter({ hasText: 'transactions' })
+  await expect(summary).toContainText('3 of 3')
+  await page.getByLabel('Search').fill('kroger')
+  await expect(summary).toContainText('1 of 3')
+  await expect(page.getByRole('row', { name: /Shell/ })).toHaveCount(0)
+  await page.getByLabel('Search').fill('household')
+  await expect(page.getByRole('row', { name: /Shell/ })).toBeVisible()
+  await expect(page.getByRole('row', { name: /Kroger/ })).toHaveCount(0)
+  await page.getByLabel('Search').fill('20.00')
+  await expect(page.getByRole('row', { name: /Kroger/ })).toBeVisible()
+  await expect(page.getByRole('row', { name: /Shell/ })).toHaveCount(0)
+  await page.getByLabel('Search').fill('nothing like this')
+  await expect(page.getByText('No transactions match these filters.')).toBeVisible()
+  await page.getByRole('button', { name: 'Clear filters' }).click()
+  await expect(page.getByLabel('Search')).toHaveValue('')
+  await expect(summary).toContainText('3 of 3')
+
+  // opening another row with typing in this one asks first
+  await page.getByRole('row', { name: /Kroger/ }).click()
+  await page.getByLabel('Payee').fill('Kroger Marketplace')
+  await page.getByRole('row', { name: /Shell/ }).click()
+  const ask = page.getByRole('alertdialog')
+  await expect(ask).toContainText('Discard your changes?')
+  await ask.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(page.getByLabel('Payee')).toHaveValue('Kroger Marketplace')
+  await page.getByRole('row', { name: /Shell/ }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Discard changes' }).click()
+  await expect(page.getByLabel('Payee')).toHaveValue('Shell')
+
+  // going back to one line says which categories are dropped
+  await page.getByRole('button', { name: 'Split', exact: true }).click()
+  await page.getByLabel('Outflow 1').fill('25')
+  await chooseCategory(page, 'Category 2', 'Groceries')
+  await page.getByLabel('Outflow 2').fill('10')
+  await page.getByRole('button', { name: 'Unsplit' }).click()
+  await expect(page.getByRole('alertdialog')).toContainText('Groceries')
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Keep split' }).click()
+  await expect(page.getByLabel('Outflow 2')).toHaveValue('10')
+  await page.getByRole('button', { name: 'Unsplit' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Unsplit' }).click()
+  await expect(page.getByLabel('Outflow', { exact: true })).toHaveValue('35.00')
 })
 
 test('credit card payments, transfers, reconciliation and the activity feed', async ({ page }) => {
   await page.goto('/')
   await setUpHousehold(page)
   async function addAccount(name: string, type: string, balance: string) {
-    await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+    await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
     const dialog = page.getByRole('dialog')
     await dialog.getByLabel('Account name').fill(name)
     await dialog.getByLabel('Account type').selectOption(type)
@@ -360,7 +468,7 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await sidebar(page).getByRole('link', { name: /Visa/ }).click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Kroger')
-  await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Groceries' })
+  await chooseCategory(page, 'Category', 'Groceries')
   await page.getByLabel('Outflow').fill('30')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Kroger/ })).toContainText('$30.00')
@@ -408,10 +516,16 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await expect(adjustment).toContainText('$10.00')
   await expect(adjustment.getByRole('button', { name: /Cleared/ })).toBeDisabled()
   // reconciled transactions are locked: the Starting Balance can't be deleted
-  page.once('dialog', (d) => void d.accept())
   await page.getByRole('row', { name: /Starting Balance/ }).click()
   await page.getByRole('button', { name: 'Delete' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete transaction' }).click()
+  // the reason shows in the editor, and the editor stays open with what was typed in it
   await expect(page.getByRole('alert').filter({ hasText: 'reconciled' })).toBeVisible()
+  await page.getByLabel('Payee').fill('Renamed')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'reconciled' })).toBeVisible()
+  await expect(page.getByLabel('Payee')).toHaveValue('Renamed')
+  await page.getByRole('button', { name: 'Cancel' }).click()
 
   // the activity feed says who did what once the device is named
   await openSettings(page, 'Household')
@@ -435,7 +549,7 @@ test('imported transactions wait in the inbox until they are categorized and app
 }, testInfo) => {
   await page.goto('/')
   await setUpHousehold(page)
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Account type').selectOption('checking')
@@ -492,7 +606,7 @@ test('imported transactions wait in the inbox until they are categorized and app
   await sidebar(page)
     .getByRole('link', { name: /Checking/ })
     .click()
-  await expect(page.getByRole('row', { name: /KROGER #123/ })).toContainText('New')
+  await expect(page.getByRole('row', { name: /KROGER #123/ })).toContainText('Needs review')
   await sidebar(page).getByRole('link', { name: /Inbox/ }).click()
 
   await page.getByLabel('Category for KROGER #123').selectOption({ label: 'Groceries' })
@@ -505,7 +619,7 @@ test('imported transactions wait in the inbox until they are categorized and app
     .click()
   const approved = page.getByRole('row', { name: /KROGER #123/ })
   await expect(approved).toContainText('Groceries')
-  await expect(approved).not.toContainText('New')
+  await expect(approved).not.toContainText('Needs review')
 })
 
 test('YNAB history comes in from its export, and payee rules can use the new categories', async ({
@@ -584,7 +698,7 @@ test('an investment account is set up in the add-account dialog and keeps a valu
   await page.goto('/')
   await setUpHousehold(page)
 
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Fidelity')
   // the investment settings only appear for an investment account
@@ -647,7 +761,7 @@ test('an investment account is set up in the add-account dialog and keeps a valu
   await card.getByRole('button', { name: 'Done' }).click()
 
   // a checking account has none of this
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Account type').selectOption('checking')
   await dialog.getByRole('button', { name: 'Add account' }).click()
@@ -658,7 +772,7 @@ test('an investment account is set up in the add-account dialog and keeps a valu
 test('goals: create, fund, spend from, and archive', async ({ page }) => {
   await page.goto('/')
   await setUpHousehold(page)
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Account type').selectOption('checking')
@@ -675,7 +789,7 @@ test('goals: create, fund, spend from, and archive', async ({ page }) => {
   await page.getByRole('button', { name: 'Add', exact: true }).click()
 
   // a goal with a target and a date far enough out that only the label is stable
-  await page.getByRole('button', { name: new RegExp('^Household (Need|Want)') }).click()
+  await page.getByRole('button', { name: /^Household/ }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Add goal' }).click()
   await page.getByLabel('Goal name').fill('Laptop')
   await page.getByLabel('Target amount').fill('1200')
@@ -700,7 +814,7 @@ test('goals: create, fund, spend from, and archive', async ({ page }) => {
     .click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Apple')
-  await page.getByLabel('Category', { exact: true }).selectOption({ label: '  ↳ Laptop' })
+  await chooseCategory(page, 'Category', 'Laptop')
   await page.getByLabel('Outflow').fill('100')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Apple/ })).toContainText('Household: Laptop')
@@ -734,7 +848,7 @@ test('goals held in an account warn when they add up to more than the account ha
     ['Checking', 'checking', '1000'],
     ['Ally HYSA', 'savings', '100'],
   ]) {
-    await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+    await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
     const dialog = page.getByRole('dialog')
     await dialog.getByLabel('Account name').fill(name!)
     await dialog.getByLabel('Account type').selectOption(type!)
@@ -786,7 +900,7 @@ test('goals held in an account warn when they add up to more than the account ha
 test('needs vs wants: category tags, split overrides, and the report', async ({ page }) => {
   await page.goto('/')
   await setUpHousehold(page)
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Account type').selectOption('checking')
@@ -802,12 +916,14 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   await page.getByLabel('New category in Everyday').fill('Groceries')
   await page.getByRole('button', { name: 'Add', exact: true }).click()
 
-  // a new category is a want until it is marked
+  // a new category is a want until it is marked; the tag is in its sheet, not on every row
   const category = page.getByRole('row', { name: /^Groceries/ })
-  await expect(category).toContainText('Want')
-  await page.getByRole('button', { name: new RegExp('^Groceries (Need|Want)') }).click()
-  await page.getByRole('dialog').getByRole('button', { name: 'Mark as need' }).click()
-  await expect(category).toContainText('Need')
+  await expect(category).not.toContainText('Want')
+  await page.getByRole('button', { name: /^Groceries/ }).click()
+  const sheet = page.getByRole('dialog')
+  await expect(sheet).toContainText('Want')
+  await sheet.getByRole('button', { name: 'Mark as need' }).click()
+  await expect(sheet).toContainText('Need')
   await page.keyboard.press('Escape')
 
   // groceries are a need, the wine on the same receipt is a want
@@ -817,9 +933,9 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Market')
   await page.getByRole('button', { name: 'Split', exact: true }).click()
-  await page.getByLabel('Category 1').selectOption({ label: 'Groceries' })
+  await chooseCategory(page, 'Category 1', 'Groceries')
   await page.getByLabel('Outflow 1').fill('80')
-  await page.getByLabel('Category 2').selectOption({ label: 'Groceries' })
+  await chooseCategory(page, 'Category 2', 'Groceries')
   await page.getByLabel('Outflow 2').fill('20')
   await expect(page.getByLabel('Need or want 1')).toHaveValue('')
   await page.getByLabel('Need or want 2').selectOption({ label: 'Want' })
@@ -882,7 +998,7 @@ test('an emergency expense is paid for from the emergency fund, and the report l
 }) => {
   await page.goto('/')
   await setUpHousehold(page)
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Account type').selectOption('checking')
@@ -922,7 +1038,7 @@ test('an emergency expense is paid for from the emergency fund, and the report l
     .click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Garage')
-  await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Car repair' })
+  await chooseCategory(page, 'Category', 'Car repair')
   await page.getByLabel('Outflow').fill('400')
   await page.getByLabel('Pay from the emergency fund').check()
   await page.getByRole('button', { name: 'Save' }).click()
@@ -957,7 +1073,7 @@ test('income rules: a paycheck feeds the tithe, and taking it back reverses that
 }) => {
   await page.goto('/')
   await setUpHousehold(page)
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Account type').selectOption('checking')
@@ -1032,20 +1148,20 @@ test('investment goals own units of an account, and Roth contributions count aga
   await page.goto('/')
   await setUpHousehold(page)
   const dialog = page.getByRole('dialog')
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Account type').selectOption('checking')
   await dialog.getByLabel('Current balance').fill('5000')
   await dialog.getByRole('button', { name: 'Add account' }).click()
   await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
 
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   await dialog.getByLabel('Account name').fill('Brokerage')
   await dialog.getByLabel('Account type').selectOption('investment')
   await dialog.getByRole('button', { name: 'Add account' }).click()
   await expect(page.getByRole('heading', { name: 'Brokerage' })).toBeVisible()
 
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   await dialog.getByLabel('Account name').fill('Jessica Roth')
   await dialog.getByLabel('Account type').selectOption('investment')
   await dialog.getByLabel('Investment type').selectOption({ label: 'IRA' })
@@ -1061,7 +1177,7 @@ test('investment goals own units of an account, and Roth contributions count aga
   await page.getByRole('button', { name: 'Add category to Savings' }).click()
   await page.getByLabel('New category in Savings').fill('Investing')
   await page.getByRole('button', { name: 'Add', exact: true }).click()
-  await page.getByRole('button', { name: new RegExp('^Investing (Need|Want)') }).click()
+  await page.getByRole('button', { name: /^Investing/ }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Add goal' }).click()
   await page.getByLabel('Goal name').fill('House')
   await page.getByLabel('Target amount').fill('50000')
@@ -1140,13 +1256,13 @@ test('reports show net worth, a retirement projection and each category’s reti
   await page.goto('/')
   await setUpHousehold(page)
 
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Current balance').fill('1000')
   await dialog.getByRole('button', { name: 'Add account' }).click()
 
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   await dialog.getByLabel('Account name').fill('Work 401k')
   await dialog.getByLabel('Account type').selectOption('investment')
   await dialog.getByLabel('Investment type').selectOption({ label: '401(k)' })
@@ -1193,7 +1309,7 @@ test('reports show net worth, a retirement projection and each category’s reti
   await page.getByRole('button', { name: 'Add category to Bills' }).click()
   await page.getByLabel('New category in Bills').fill('Travel')
   await page.getByRole('button', { name: 'Add', exact: true }).click()
-  await page.getByRole('button', { name: new RegExp('^Travel (Need|Want)') }).click()
+  await page.getByRole('button', { name: /^Travel/ }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'In retirement…' }).click()
   const status = page.getByRole('dialog')
   await status.getByLabel(/^Changes/).check()
@@ -1203,7 +1319,7 @@ test('reports show net worth, a retirement projection and each category’s reti
   await page.reload()
   await expect(page.getByRole('row', { name: /Travel/ })).toContainText('×1.5')
 
-  await page.getByRole('button', { name: new RegExp('^Travel (Need|Want)') }).click()
+  await page.getByRole('button', { name: /^Travel/ }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'In retirement…' }).click()
   await status.getByLabel(/^Ends/).check()
   await status.getByRole('button', { name: 'Save' }).click()
@@ -1224,7 +1340,7 @@ test('bills feed a cash-flow forecast, and the monthly review fixes an overspent
   await page.goto('/')
   await setUpHousehold(page)
 
-  await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Current balance').fill('2000')
@@ -1278,7 +1394,7 @@ test('bills feed a cash-flow forecast, and the monthly review fixes an overspent
     .click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Market')
-  await page.getByLabel('Category').selectOption({ label: 'Groceries' })
+  await chooseCategory(page, 'Category', 'Groceries')
   await page.getByLabel('Outflow').fill('150')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Market/ })).toContainText('$150.00')
@@ -1301,7 +1417,7 @@ test('reports estimate retirement spending, check it against the portfolio and p
   await setUpHousehold(page)
 
   async function addAccount(name: string, type: string, balance: string, kind?: string) {
-    await sidebar(page).getByRole('button', { name: '+ Add Account' }).click()
+    await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
     const dialog = page.getByRole('dialog')
     await dialog.getByLabel('Account name').fill(name)
     await dialog.getByLabel('Account type').selectOption(type)
@@ -1325,7 +1441,7 @@ test('reports estimate retirement spending, check it against the portfolio and p
     .click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
   await page.getByLabel('Payee').fill('Landlord')
-  await page.getByLabel('Category').selectOption({ label: 'Rent' })
+  await chooseCategory(page, 'Category', 'Rent')
   await page.getByLabel('Outflow').fill('2000')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Landlord/ })).toContainText('$2,000.00')
@@ -1400,4 +1516,162 @@ test('reports estimate retirement spending, check it against the portfolio and p
   await expect(page.getByRole('region', { name: 'Education savings' })).toContainText(
     'Add a plan for each child',
   )
+})
+
+test('the budget shows last month and next month read-only; opening one makes it editable', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Current balance').fill('1000')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Bills')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByRole('button', { name: 'Add category to Bills' }).click()
+  await page.getByLabel('New category in Bills').fill('Rent')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  await page.getByLabel('Assigned for Rent').fill('600')
+  await page.getByLabel('Assigned for Rent').press('Enter')
+
+  // the months either side are figures, not boxes: one box per row, and it is this month's
+  const row = page.getByRole('row', { name: /Rent/ })
+  const peeks = row.locator('td.peek')
+  await expect(peeks).toHaveCount(4)
+  await expect(row.getByRole('textbox')).toHaveCount(1)
+  // last month assigned nothing; what this month holds rolls into next month
+  await expect(peeks.nth(0)).toHaveText('$0.00')
+  await expect(peeks.nth(2)).toHaveText('$0.00')
+  await expect(peeks.nth(3)).toHaveText('$600.00')
+
+  // opening next month makes it the editable one, and this month becomes the read-only one before it
+  const open = page.getByRole('button', { name: /read-only, open it to edit/ })
+  await open.last().click()
+  await expect(row.getByRole('textbox')).toHaveCount(1)
+  await page.getByLabel('Assigned for Rent').fill('100')
+  await page.getByLabel('Assigned for Rent').press('Enter')
+  await expect(peeks.nth(0)).toHaveText('$600.00')
+  await expect(peeks.nth(1)).toHaveText('$600.00')
+  await expect(page.getByLabel('Assigned for Rent')).toHaveValue('$100.00')
+
+  // and back
+  await open.first().click()
+  await expect(page.getByLabel('Assigned for Rent')).toHaveValue('$600.00')
+  await expect(peeks.nth(3)).toHaveText('$700.00')
+})
+
+test('categories and groups are reordered by dragging their handle, and the order persists', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+
+  for (const group of ['Home', 'Fun']) {
+    await page.getByRole('button', { name: '+ Category Group' }).click()
+    await page.getByLabel('Group name').fill(group)
+    await page.getByRole('button', { name: 'Add group' }).click()
+    await expect(page.getByRole('button', { name: `Add category to ${group}` })).toBeVisible()
+  }
+  for (const name of ['Rent', 'Power', 'Water']) {
+    await page.getByRole('button', { name: 'Add category to Home' }).click()
+    await page.getByLabel('New category in Home').fill(name)
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(page.getByRole('row', { name: new RegExp(name) })).toBeVisible()
+  }
+
+  const names = () =>
+    page.locator('.budget-table tbody tr:not(.add-row) .row-label').allTextContents()
+  await expect.poll(names).toEqual(['Home', 'Rent', 'Power', 'Water', 'Fun'])
+
+  /** Presses a handle, carries it over `target` (upper or lower half), and lets go. */
+  async function drag(handle: string, target: string, half: 'upper' | 'lower') {
+    const from = (await page.getByTitle(handle).boundingBox())!
+    const to = (await page
+      .getByRole('row', { name: new RegExp(target) })
+      .first()
+      .boundingBox())!
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+    await page.mouse.down()
+    const y = half === 'upper' ? to.y + to.height * 0.2 : to.y + to.height * 0.8
+    await page.mouse.move(from.x + 10, from.y + 10, { steps: 3 })
+    await page.mouse.move(to.x + 60, y, { steps: 8 })
+    await page.mouse.up()
+  }
+
+  // a category goes above another, then below one
+  await drag('Drag to move Water', 'Rent', 'upper')
+  await expect.poll(names).toEqual(['Home', 'Water', 'Rent', 'Power', 'Fun'])
+  await drag('Drag to move Water', 'Power', 'lower')
+  await expect.poll(names).toEqual(['Home', 'Rent', 'Power', 'Water', 'Fun'])
+
+  // a whole group moves with its categories
+  await drag('Drag to move Fun', 'Home', 'upper')
+  await expect.poll(names).toEqual(['Fun', 'Home', 'Rent', 'Power', 'Water'])
+
+  // a drop outside the group's own rows changes nothing
+  await drag('Drag to move Rent', 'Fun', 'upper')
+  await expect.poll(names).toEqual(['Fun', 'Home', 'Rent', 'Power', 'Water'])
+
+  await page.reload()
+  await expect.poll(names).toEqual(['Fun', 'Home', 'Rent', 'Power', 'Water'])
+})
+
+test('the budget remembers its month and folded groups, and points Ready to Assign at the review', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await sidebar(page).getByRole('button', { name: 'Add Account' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Account name').fill('Checking')
+  await dialog.getByLabel('Current balance').fill('500')
+  await dialog.getByRole('button', { name: 'Add account' }).click()
+  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+
+  // a new group opens its add-category form straight away
+  await page.getByRole('button', { name: '+ Category Group' }).click()
+  await page.getByLabel('Group name').fill('Bills')
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByLabel('New category in Bills').fill('Rent')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(page.getByRole('row', { name: /Rent/ })).toBeVisible()
+
+  // money left to place links to the review; once it is all placed there is nothing to link
+  const ready = page.getByRole('status').filter({ hasText: 'Ready to Assign' })
+  await expect(ready.getByRole('link', { name: /Ready to Assign/ })).toHaveAttribute(
+    'href',
+    /#\/review\/\d{4}-\d{2}$/,
+  )
+  await page.getByLabel('Assigned for Rent').fill('500')
+  await page.getByLabel('Assigned for Rent').press('Enter')
+  const placed = page.getByRole('status').filter({ hasText: 'All money assigned' })
+  await expect(placed).toBeVisible()
+  await expect(placed.getByRole('link')).toHaveCount(0)
+
+  // the open month is in the URL, and Back from another page returns to it
+  const heading = page.getByRole('heading', { level: 1 })
+  const before = await heading.innerText()
+  await page.getByRole('button', { name: 'Next month' }).click()
+  await expect(page).toHaveURL(/#\/budget\/\d{4}-\d{2}$/)
+  await expect(heading).not.toHaveText(before)
+  const later = await heading.innerText()
+  await sidebar(page).getByRole('link', { name: 'All Accounts' }).click()
+  await page.goBack()
+  await expect(heading).toHaveText(later)
+  await page.getByRole('button', { name: 'This month' }).click()
+  await expect(page).toHaveURL(/#\/budget$/)
+  await expect(heading).toHaveText(before)
+
+  // a folded group stays folded after a reload
+  await page.getByRole('button', { name: 'Collapse Bills' }).click()
+  await expect(page.getByRole('row', { name: /Rent/ })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Expand Bills' })).toBeVisible()
+  await expect(page.getByRole('row', { name: /Rent/ })).toHaveCount(0)
 })

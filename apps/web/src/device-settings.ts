@@ -4,6 +4,7 @@
  */
 const KEY_FIRST_RUN = 'budget-fi:first-run-at'
 const KEY_LAST_BACKUP = 'budget-fi:last-backup-at'
+const KEY_COLLAPSED_GROUPS = 'budget-fi:collapsed-groups'
 
 function read(key: string): string | null {
   try {
@@ -35,4 +36,18 @@ export function getBackupState(now = new Date()): {
 
 export function recordBackup(now = new Date()): void {
   write(KEY_LAST_BACKUP, now.toISOString())
+}
+
+/** Category groups folded away in the budget on this device; each person folds their own. */
+export function getCollapsedGroups(): Set<string> {
+  try {
+    const parsed: unknown = JSON.parse(read(KEY_COLLAPSED_GROUPS) ?? '[]')
+    return new Set(Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+export function setCollapsedGroups(ids: ReadonlySet<string>): void {
+  write(KEY_COLLAPSED_GROUPS, JSON.stringify([...ids]))
 }

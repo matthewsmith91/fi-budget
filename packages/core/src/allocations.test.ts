@@ -245,6 +245,26 @@ describe('month rollover', () => {
   })
 })
 
+describe('income for a month', () => {
+  it('counts only that month’s uncategorized inflows on budget accounts', async () => {
+    const { api, spend, checking, food } = await makeApi()
+    const tracking = await api.createAccount({
+      name: 'Brokerage',
+      type: 'investment',
+      onBudget: false,
+    })
+    await spend(checking.id, '2026-01-15', null, 300000)
+    await spend(checking.id, '2026-01-31', null, 50000)
+    await spend(checking.id, '2026-02-01', null, 70000)
+    await spend(checking.id, '2026-01-10', food.id, -4000) // spending is not income
+    await spend(checking.id, '2026-01-12', food.id, 2500) // a categorized refund is not income
+    await spend(tracking.id, '2026-01-20', null, 900000) // off budget
+    expect(await api.getMonthIncome('2026-01')).toBe(350000)
+    expect(await api.getMonthIncome('2026-02')).toBe(70000)
+    expect(await api.getMonthIncome('2026-03')).toBe(0)
+  })
+})
+
 describe('ready to assign by month', () => {
   async function funded() {
     const ctx = await makeApi()

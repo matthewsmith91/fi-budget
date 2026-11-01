@@ -31,6 +31,7 @@ import {
   type SyncStatus,
   type SyncTransport,
 } from './sync.ts'
+import { randomUuid } from './uuid.ts'
 import { transactionsApi, type TransactionsApi } from './transactions.ts'
 import { unitLedgerApi, type UnitLedgerApi } from './unit-ledger.ts'
 import { ynabApi, type YnabApi } from './ynab.ts'
@@ -112,7 +113,7 @@ export interface ApiDeps {
 
 export function createBudgetApi(deps: ApiDeps): BudgetApi {
   const { adapter } = deps
-  const newId = deps.newId ?? (() => crypto.randomUUID())
+  const newId = deps.newId ?? randomUuid
   const now = deps.now ?? (() => new Date().toISOString())
 
   async function getHousehold(): Promise<Household | null> {

@@ -40,6 +40,19 @@ describe('parseRegister', () => {
     expect(r.rows.map((x) => x.date)).toEqual(['2026-10-15', '2026-02-01'])
   })
 
+  it('reads year-first dates written with slashes', () => {
+    const r = parseRegister(register(row('2026/10/30'), row('2026/01/02')))
+    expect(r.dateOrder).toBe('YMD')
+    expect(r.ambiguousDates).toBe(false)
+    expect(r.rows.map((x) => x.date)).toEqual(['2026-10-30', '2026-01-02'])
+  })
+
+  it('names the date when it cannot be read in the detected order', () => {
+    expect(() => parseRegister(register(row('13/13/2026')))).toThrow(
+      /Register line 2: .*not a date/,
+    )
+  })
+
   it('reads ISO dates, and flags dates that could be read either way', () => {
     expect(parseRegister(register(row('2026-10-15'))).dateOrder).toBe('YMD')
     const unsure = parseRegister(register(row('01/02/2026')))
@@ -70,6 +83,17 @@ describe('parseRegister', () => {
     expect(d).toMatchObject({ group: 'Everyday', category: 'Groceries' })
   })
 
+  it('marks the lines YNAB put in the budget, which a tracking account never has', () => {
+    const rows = parseRegister(
+      register(
+        'Checking,,10/15/2026,Kroger,Everyday: Groceries,Everyday,Groceries,,$12.50,$0.00,Cleared',
+        'Checking,,10/15/2026,Employer,Inflow: Ready to Assign,Inflow,Ready to Assign,,$0.00,$3.00,Cleared',
+        'Mortgage,,10/15/2026,Transfer : Checking,,,,,$0.00,$9.00,Cleared',
+      ),
+    ).rows
+    expect(rows.map((r) => r.inBudget)).toEqual([true, true, false])
+  })
+
   it('reads the older YNAB 4 column names', () => {
     const text =
       'Account,Flag,Check Number,Date,Payee,Category,Master Category,Sub Category,Memo,Outflow,Inflow,Cleared\n' +
@@ -91,6 +115,25 @@ describe('parseRegister', () => {
 
 describe('parseBudget', () => {
   const head = 'Month,Category Group/Category,Category Group,Category,Budgeted,Activity,Available'
+
+  it('reads the newer Plan.csv, whose Budgeted column is called Assigned', () => {
+    const rows = parseBudget(
+      [
+        '\uFEFF"Month","Category Group/Category","Category Group","Category","Assigned","Activity","Available"',
+        '"Jan 2020","Monthly Bills: Electricity Bill","Monthly Bills","Electricity Bill",$243.63,-$122.63,$121.00',
+      ].join('\n'),
+    )
+    expect(rows).toEqual([
+      {
+        month: '2020-01',
+        group: 'Monthly Bills',
+        category: 'Electricity Bill',
+        budgeted: 24363,
+        activity: -12263,
+        available: 12100,
+      },
+    ])
+  })
 
   it('reads months by name, number or ISO, and leaves out YNAB’s own groups', () => {
     const rows = parseBudget(

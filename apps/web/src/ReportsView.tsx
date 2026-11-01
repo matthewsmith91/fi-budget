@@ -21,7 +21,17 @@ const monthName = (month: string) => {
 export function ReportsView({ today }: { today: Date }) {
   // The last complete month, so a half-spent current month doesn't pull the averages down.
   const [month, setMonth] = useState(() => shiftMonth(monthOf(todayIso(today)), -1))
-  const report = useBudgetQuery(() => budget.getNeedsWantsReport({ month }), [month])
+  // Narrows the Average month and By month cards; the other cards aren't about categories.
+  const [categoryId, setCategoryId] = useState('')
+  const groups = useBudgetQuery(() => budget.listCategoryGroups())
+  const report = useBudgetQuery(
+    () => budget.getNeedsWantsReport({ month, ...(categoryId ? { categoryId } : {}) }),
+    [month, categoryId],
+  )
+  const categoryName = (groups.data ?? [])
+    .flatMap((g) => g.categories)
+    .find((c) => c.id === categoryId)?.name
+  const scope = categoryId ? ` · ${categoryName ?? 'Unknown category'}` : ''
   const label = monthLabel(month)
   const data = report.data
 
@@ -50,6 +60,30 @@ export function ReportsView({ today }: { today: Date }) {
             ›
           </button>
         </div>
+        <label className="report-filter">
+          <span>Category</span>
+          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">All categories</option>
+            {categoryId && categoryName === undefined && (
+              <option value={categoryId}>Unknown category</option>
+            )}
+            {(groups.data ?? []).map((g) => {
+              const categories = g.categories.filter(
+                (c) => !c.creditCardAccountId && (!c.hidden || c.id === categoryId),
+              )
+              return categories.length === 0 ? null : (
+                <optgroup key={g.id} label={g.name}>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )
+            })}
+          </select>
+          <span className="muted">Applies to Average month and By month</span>
+        </label>
       </header>
 
       {report.error && (
@@ -67,7 +101,7 @@ export function ReportsView({ today }: { today: Date }) {
       <EducationCard today={today} />
 
       <section className="card" aria-label="Average month">
-        <h2>Average month</h2>
+        <h2>Average month{scope}</h2>
         <div className="table-wrap">
           <table className="report-table">
             <thead>
@@ -122,7 +156,7 @@ export function ReportsView({ today }: { today: Date }) {
       <RothContributionsCard today={today} />
 
       <section className="card" aria-label="By month">
-        <h2>By month</h2>
+        <h2>By month{scope}</h2>
         <div className="table-wrap">
           <table className="report-table">
             <thead>

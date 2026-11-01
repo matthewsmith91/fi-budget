@@ -100,10 +100,11 @@ export function YnabImportPanel() {
       <h2>Import from YNAB</h2>
       <p className="muted">
         Bring your history over once. In YNAB choose your budget name → Export Budget Data, then
-        pick <code>Register.csv</code> (every transaction) and <code>Budget.csv</code> (what you
-        assigned each month; optional, but without it Ready to Assign starts as all your income). Do
-        this before connecting your bank, so fetched transactions can be matched to what is already
-        here. Export a backup first: an import can’t be undone.
+        pick <code>Register.csv</code> (every transaction) and <code>Budget.csv</code> (called{' '}
+        <code>Plan.csv</code> in newer exports; what you assigned each month; optional, but without
+        it Ready to Assign starts as all your income). Do this before connecting your bank, so
+        fetched transactions can be matched to what is already here. Export a backup first: an
+        import can’t be undone.
       </p>
 
       {!result && (

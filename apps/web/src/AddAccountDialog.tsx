@@ -1,21 +1,27 @@
 import {
   ACCOUNT_TYPES,
+  cents,
   DEFAULT_INVESTMENT_SETTINGS,
   INVESTMENT_KINDS,
   INVESTMENT_MODES,
+  formatCents,
   parseCents,
   taxTypeFor,
   taxTypesFor,
+  type Account,
   type AccountType,
   type InvestmentKind,
   type InvestmentMode,
   type TaxType,
 } from '@budget-fi/core'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { bankApi, type ExternalAccount } from './bank.ts'
+import { daysThisMonth, openFromBank, openingBalance, unlinkedBankAccounts } from './bank-open.ts'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
 import { todayIso } from './format.ts'
+import { useAsync } from './hooks.ts'
 import {
   INVESTMENT_KIND_LABELS,
   INVESTMENT_MODE_LABELS,
@@ -41,7 +47,21 @@ export function AddAccountDialog({ open, onClose }: { open: boolean; onClose: ()
   const [ownerId, setOwnerId] = useState('')
   const [mode, setMode] = useState<InvestmentMode>(DEFAULT_INVESTMENT_SETTINGS.mode)
   const household = useBudgetQuery(() => budget.getHousehold())
+  const mappings = useBudgetQuery(() => budget.listAccountMappings())
   const [error, setError] = useState<string | null>(null)
+  // The server is optional, so a missing one just means no bank option; it is only asked when
+  // the dialog is open, not on every page load.
+  const links = useAsync(() => (open ? bankApi.links() : Promise.resolve([])), [open])
+  const [bank, setBank] = useState<{
+    loading: boolean
+    accounts: ExternalAccount[] | null
+    error: string | null
+  }>({ loading: false, accounts: null, error: null })
+  const [bankId, setBankId] = useState('')
+  // An account made by a submit whose bank step then failed: pressing the button again
+  // finishes that account instead of adding a second one.
+  const created = useRef<Account | null>(null)
+  const [finishing, setFinishing] = useState(false)
 
   useEffect(() => {
     const el = dialog.current
@@ -50,19 +70,63 @@ export function AddAccountDialog({ open, onClose }: { open: boolean; onClose: ()
     if (!open && el.open) el.close()
   }, [open])
 
+  function reset() {
+    created.current = null
+    setFinishing(false)
+    setBankId('')
+    setBank({ loading: false, accounts: null, error: null })
+  }
+
+  /** One request per linked bank: balances and this month's transactions together. */
+  async function loadBank() {
+    setBank({ loading: true, accounts: null, error: null })
+    const results = await Promise.all(
+      (links.data ?? []).map((l) =>
+        bankApi.fetchTransactions(l.id, daysThisMonth(todayIso())).catch((err: unknown) => ({
+          linkId: l.id,
+          ok: false as const,
+          error: messageOf(err),
+        })),
+      ),
+    )
+    const failed = results.find((r) => !r.ok)
+    setBank({
+      loading: false,
+      accounts: results.flatMap((r) => (r.ok ? r.accounts : [])),
+      error: failed && !failed.ok ? failed.error : null,
+    })
+  }
+
+  const choices = unlinkedBankAccounts(bank.accounts ?? [], mappings.data ?? [])
+  const linked = choices.find((a) => a.id === bankId)
+  // Imported transactions count in the balance, so the account opens at what the bank held
+  // before them; an investment account is just valued at the bank's balance.
+  const fromBank = linked ? (type === 'investment' ? linked.balance : openingBalance(linked)) : null
+
+  function pickBank(id: string) {
+    setBankId(id)
+    const picked = choices.find((a) => a.id === id)
+    if (picked && !name.trim()) setName(picked.org ? `${picked.org} · ${picked.name}` : picked.name)
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    const start = balance.trim() === '' ? 0 : parseCents(balance)
+    const start = linked || balance.trim() === '' ? 0 : parseCents(balance)
     if (start === null) return setError('Enter the balance as dollars, like 1,250.00')
     try {
-      const account = await budget.createAccount({
-        name,
-        type,
-        investment:
-          type === 'investment' ? { kind, taxType, ownerId: ownerId || null, mode } : undefined,
-      })
-      if (start !== 0) {
+      const account =
+        created.current ??
+        (created.current = await budget.createAccount({
+          name,
+          type,
+          investment:
+            type === 'investment' ? { kind, taxType, ownerId: ownerId || null, mode } : undefined,
+        }))
+      if (linked) {
+        setFinishing(true)
+        await openFromBank(budget, account, linked, todayIso())
+      } else if (start !== 0) {
         await budget.createTransaction({
           accountId: account.id,
           date: todayIso(),
@@ -71,6 +135,7 @@ export function AddAccountDialog({ open, onClose }: { open: boolean; onClose: ()
           cleared: true,
         })
       }
+      reset()
       setName('')
       setBalance('')
       setKind(DEFAULT_INVESTMENT_SETTINGS.kind)
@@ -81,12 +146,25 @@ export function AddAccountDialog({ open, onClose }: { open: boolean; onClose: ()
       onClose()
       location.hash = hrefFor.account(account.id)
     } catch (err) {
-      setError(messageOf(err))
+      refresh()
+      setError(
+        created.current
+          ? `“${created.current.name}” was added, but bringing in the bank’s figures failed: ${messageOf(err)} Try again to finish.`
+          : messageOf(err),
+      )
     }
   }
 
   return (
-    <dialog ref={dialog} className="dialog" aria-labelledby="add-account-title" onClose={onClose}>
+    <dialog
+      ref={dialog}
+      className="dialog"
+      aria-labelledby="add-account-title"
+      onClose={() => {
+        reset()
+        onClose()
+      }}
+    >
       <form onSubmit={(e) => void submit(e)}>
         <h2 id="add-account-title">Add Account</h2>
         <label>
@@ -155,15 +233,64 @@ export function AddAccountDialog({ open, onClose }: { open: boolean; onClose: ()
             </label>
           </>
         )}
+        {(links.data?.length ?? 0) > 0 && (
+          <div className="stack">
+            {bank.accounts === null ? (
+              <div className="row">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={bank.loading}
+                  onClick={() => void loadBank()}
+                >
+                  {bank.loading ? 'Asking your bank…' : 'Fill in from my bank'}
+                </button>
+              </div>
+            ) : (
+              <label>
+                Bank account
+                <select value={bankId} onChange={(e) => pickBank(e.target.value)}>
+                  <option value="">None, enter it myself</option>
+                  {choices.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.org ? `${a.org} · ${a.name}` : a.name} · {formatCents(cents(a.balance))}
+                    </option>
+                  ))}
+                </select>
+                {choices.length === 0 && (
+                  <small className="muted">Every bank account is already linked.</small>
+                )}
+              </label>
+            )}
+            {bank.error && (
+              <p className="error" role="alert">
+                {bank.error}
+              </p>
+            )}
+          </div>
+        )}
         <label>
-          Current balance
+          {linked
+            ? type === 'investment'
+              ? 'Current value'
+              : 'Starting balance'
+            : 'Current balance'}
           <input
             inputMode="decimal"
             placeholder="0.00"
-            value={balance}
+            value={fromBank === null ? balance : formatCents(cents(fromBank))}
+            readOnly={linked !== undefined}
             onChange={(e) => setBalance(e.target.value)}
           />
-          <small className="muted">Use a negative number for a card balance you owe.</small>
+          {linked ? (
+            <small className="muted">
+              {type === 'investment'
+                ? 'Taken from your bank.'
+                : `Worked out from your bank so the account ends on ${formatCents(cents(linked.balance))} once this month’s ${linked.transactions.length} transaction${linked.transactions.length === 1 ? '' : 's'} come into the inbox.`}
+            </small>
+          ) : (
+            <small className="muted">Use a negative number for a card balance you owe.</small>
+          )}
         </label>
         {error && (
           <p className="error" role="alert">
@@ -174,7 +301,7 @@ export function AddAccountDialog({ open, onClose }: { open: boolean; onClose: ()
           <button type="button" className="secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit">Add account</button>
+          <button type="submit">{finishing ? 'Finish linking' : 'Add account'}</button>
         </div>
       </form>
     </dialog>

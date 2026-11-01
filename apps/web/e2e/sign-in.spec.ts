@@ -137,10 +137,7 @@ test('signs in and pairs devices and people, then syncs a new device from the se
   await expect(banner).toHaveAttribute('data-sync', 'synced')
   await laptop.getByRole('link', { name: '← Back to budget' }).click()
   await laptop.context().setOffline(true)
-  await laptop
-    .getByLabel('Budget navigation')
-    .getByRole('button', { name: '+ Add Account' })
-    .click()
+  await laptop.getByLabel('Budget navigation').getByRole('button', { name: 'Add Account' }).click()
   const dialog = laptop.getByRole('dialog')
   await dialog.getByLabel('Account name').fill('Offline account')
   await dialog.getByRole('button', { name: 'Add account' }).click()

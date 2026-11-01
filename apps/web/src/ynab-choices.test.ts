@@ -7,6 +7,7 @@ const account = (name: string, match: Parameters<typeof defaultChoice>[0]['match
   balance: 0,
   first: '2026-01-01',
   last: '2026-01-02',
+  tracking: false,
   match,
 })
 
@@ -28,6 +29,12 @@ describe('defaultChoice', () => {
     })
     expect(defaultChoice(account('Checking', { ...open, closed: true })).mode).toBe('create')
     expect(defaultChoice(account('Checking')).mode).toBe('create')
+  })
+
+  it('starts an account YNAB kept out of the budget as tracking, whatever its name says', () => {
+    const bond = { ...account('Series I Bond'), tracking: true }
+    expect(defaultChoice(bond)).toMatchObject({ mode: 'create', onBudget: false })
+    expect(defaultChoice(account('Series I Bond'))).toMatchObject({ onBudget: true })
   })
 })
 

@@ -1,35 +1,53 @@
-import {
-  cents,
-  formatCents,
-  parseCents,
-  type Account,
-  type CategoryGroup,
-  type Goal,
-  type NeedOrWant,
-  type SplitInput,
-  type Transaction,
-  type TransactionSplit,
-} from '@budget-fi/core'
-import { useState } from 'react'
+import type { Account, Transaction } from '@budget-fi/core'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { InvestmentDetails } from './InvestmentDetails.tsx'
 import { InvestmentGoals } from './InvestmentGoals.tsx'
 import { budget } from './client.ts'
+import { payeeOptions } from './combo-options.ts'
+import { useConfirm, type ConfirmOptions } from './use-confirm.tsx'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
-import { money, parseDate, shortDate, todayIso } from './format.ts'
+import { money, shortDate } from './format.ts'
 import { Menu } from './Menu.tsx'
+import {
+  categoryTotal,
+  filterHref,
+  isFiltered,
+  matchesFilter,
+  NO_FILTER,
+  searchText,
+  type RegisterFilter,
+} from './register-filter.ts'
+import { RegisterFilterBar } from './RegisterFilterBar.tsx'
 import { ReconcileDialog } from './ReconcileDialog.tsx'
+import { RenameAccountSheet } from './RenameAccountSheet.tsx'
+import { Skeleton } from './Skeleton.tsx'
+import { TransactionRow } from './TransactionRow.tsx'
 import { TransferDialog } from './TransferDialog.tsx'
+
+/**
+ * Rows drawn at a time. An imported history is thousands of transactions, and drawing them
+ * all made every refresh (even toggling Cleared) take seconds.
+ */
+const PAGE_SIZE = 200
 
 interface Props {
   /** Null shows every account. */
   accountId: string | null
+  /** Only on All Accounts: what narrows the list, kept in the URL. */
+  filter?: RegisterFilter
   accounts: Account[]
   accountsLoaded: boolean
   onAddAccount: () => void
 }
 
-export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount }: Props) {
+export function RegisterView({
+  accountId,
+  filter = NO_FILTER,
+  accounts,
+  accountsLoaded,
+  onAddAccount,
+}: Props) {
   const refresh = useRefresh()
   const transactions = useBudgetQuery(
     () => budget.listTransactions(accountId ? { accountId } : undefined),
@@ -40,15 +58,89 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
   const balances = useBudgetQuery(() => budget.getAccountBalances())
   const fundSettings = useBudgetQuery(() => budget.getEmergencyFundSettings())
   const hasFund = !!fundSettings.data?.categoryId
-  // 'new' is the blank entry row; otherwise the id of the transaction being edited
-  const [editing, setEditing] = useState<string | null>(null)
+  const { ask, dialog: confirmDialog } = useConfirm()
+  // The open editor, tied to the register it was opened in so switching accounts closes it.
+  // 'new' is the blank entry row; otherwise the id of the transaction being edited.
+  const scopeKey = accountId ?? ''
+  const [edit, setEdit] = useState<{ scope: string; id: string | null }>({
+    scope: scopeKey,
+    id: null,
+  })
+  const editing = edit.scope === scopeKey ? edit.id : null
+  // Whether the open editor holds typing that leaving would lose.
+  const dirty = useRef(false)
+  const setDirty = useCallback((value: boolean) => void (dirty.current = value), [])
+  // A row to hand focus back to once its editor closes, so the keyboard doesn't lose its place.
+  const returnFocusTo = useRef<string | null>(null)
+  // Failures of writes made outside an editor (the Cleared toggle, the account menu).
   const [error, setError] = useState<string | null>(null)
   const [transferring, setTransferring] = useState(false)
   const [reconciling, setReconciling] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  // One account's register keeps its filter here; All Accounts keeps it in the URL.
+  const [local, setLocal] = useState<{ scope: string; filter: RegisterFilter }>({
+    scope: scopeKey,
+    filter: NO_FILTER,
+  })
+  const activeFilter =
+    accountId === null ? filter : local.scope === scopeKey ? local.filter : NO_FILTER
+  // Tied to the account and filter so changing either starts from the newest rows again.
+  const scope = `${scopeKey}|${filterHref(activeFilter)}`
+  const [paging, setPaging] = useState({ scope, size: PAGE_SIZE })
+  const shownCount = paging.scope === scope ? paging.size : PAGE_SIZE
 
   const account = accountId ? accounts.find((a) => a.id === accountId) : undefined
   const scoped = accountId ? (account ? [account] : []) : accounts.filter((a) => !a.closed)
   const showAccountColumn = accountId === null
+
+  useEffect(() => {
+    if (editing !== null || returnFocusTo.current === null) return
+    const row = [...document.querySelectorAll<HTMLElement>('[data-txn]')].find(
+      (el) => el.dataset.txn === returnFocusTo.current,
+    )
+    row?.querySelector<HTMLElement>('.row-open')?.focus()
+    returnFocusTo.current = null
+  }, [editing])
+
+  const names = useMemo(
+    () => ({
+      category: new Map(
+        (groups.data ?? []).flatMap((g) => g.categories.map((c) => [c.id, c.name] as const)),
+      ),
+      goal: new Map((goals.data ?? []).map((g) => [g.id, g.name] as const)),
+      account: new Map(accounts.map((a) => [a.id, a] as const)),
+    }),
+    [groups.data, goals.data, accounts],
+  )
+  const payees = useMemo(
+    () => payeeOptions((transactions.data ?? []).flatMap((t) => (t.payee ? [t.payee] : []))),
+    [transactions.data],
+  )
+
+  // A split transaction shows whole; a category filter matches it on any of its lines.
+  const shown = useMemo(() => {
+    const all = transactions.data ?? []
+    if (!isFiltered(activeFilter)) return all
+    return all.filter((t) =>
+      matchesFilter(
+        t,
+        activeFilter,
+        activeFilter.query
+          ? searchText(
+              [
+                payeeLabel(t, names.account),
+                names.account.get(t.accountId)?.name,
+                ...t.splits.flatMap((s) => [
+                  s.categoryId ? names.category.get(s.categoryId) : null,
+                  s.goalId ? names.goal.get(s.goalId) : null,
+                ]),
+              ],
+              t.amount,
+            )
+          : undefined,
+      ),
+    )
+  }, [transactions.data, activeFilter, names])
 
   if (accountId && accountsLoaded && !account) {
     return (
@@ -80,13 +172,8 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
   const mine = (balances.data ?? []).filter((b) => ids.has(b.accountId))
   const cleared = mine.reduce((n, b) => n + b.cleared, 0)
   const working = mine.reduce((n, b) => n + b.balance, 0)
+  const balancesReady = balances.data !== undefined && (accountId === null || mine.length > 0)
 
-  const categoryName = new Map(
-    (groups.data ?? []).flatMap((g) => g.categories.map((c) => [c.id, c.name] as const)),
-  )
-  const goalName = new Map((goals.data ?? []).map((g) => [g.id, g.name] as const))
-  const accountById = new Map(accounts.map((a) => [a.id, a]))
-  const payees = [...new Set((transactions.data ?? []).flatMap((t) => (t.payee ? [t.payee] : [])))]
   // Deposits an outflow can take back: income that landed in Ready to Assign.
   const deposits = (transactions.data ?? []).filter(
     (t) =>
@@ -97,6 +184,31 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
       t.splits.every((s) => !s.categoryId),
   )
 
+  /** Opens an editor (or closes it with null), asking first if that would lose typing. */
+  async function openEditor(next: string | null) {
+    if (editing !== null && next !== editing && dirty.current) {
+      const ok = await ask({
+        title: 'Discard your changes?',
+        message: <p>This transaction has changes that haven’t been saved.</p>,
+        confirmLabel: 'Discard changes',
+        cancelLabel: 'Keep editing',
+        danger: true,
+      })
+      if (!ok) return
+    }
+    setError(null)
+    dirty.current = false
+    setEdit({ scope: scopeKey, id: next })
+  }
+
+  /** Closes the editor for good (saved, deleted or cancelled) and puts focus back on its row. */
+  function closeEditor() {
+    returnFocusTo.current = editing === 'new' ? null : editing
+    dirty.current = false
+    setEdit({ scope: scopeKey, id: null })
+  }
+
+  /** A write from outside an editor: a failure lands in the banner. */
   async function run(fn: () => Promise<unknown>) {
     setError(null)
     try {
@@ -107,7 +219,26 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
     }
   }
 
+  /** A write from inside an editor: it rejects so the editor can show why and stay open. */
+  async function write(fn: () => Promise<unknown>) {
+    await fn()
+    refresh()
+  }
+
+  function changeFilter(patch: Partial<RegisterFilter>) {
+    if (accountId === null) location.replace(filterHref({ ...filter, ...patch }))
+    else setLocal({ scope: scopeKey, filter: { ...activeFilter, ...patch } })
+  }
+
+  const openAccounts = accounts.filter((a) => !a.closed)
   const canAdd = scoped.some((a) => !a.closed)
+  const canTransfer = openAccounts.length >= 2
+  const summary = transactions.loading
+    ? null
+    : `${shown.length.toLocaleString()} of ${(transactions.data?.length ?? 0).toLocaleString()} transactions` +
+      (activeFilter.categoryId
+        ? ` · ${money(categoryTotal(shown, activeFilter.categoryId))} in category`
+        : '')
 
   return (
     <div className="page">
@@ -122,32 +253,32 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
             </span>
           )}
         </div>
-        <dl className="balances">
-          <div>
-            <dd>{money(cleared)}</dd>
+        <div className="balances" role="group" aria-label="Balances" aria-busy={!balancesReady}>
+          <dl>
             <dt>Cleared</dt>
-          </div>
+            <dd>{balancesReady ? money(cleared) : <Skeleton />}</dd>
+          </dl>
           <span aria-hidden>+</span>
-          <div>
-            <dd>{money(working - cleared)}</dd>
+          <dl>
             <dt>Uncleared</dt>
-          </div>
+            <dd>{balancesReady ? money(working - cleared) : <Skeleton />}</dd>
+          </dl>
           <span aria-hidden>=</span>
-          <div>
-            <dd>{money(working)}</dd>
+          <dl>
             <dt>Working Balance</dt>
-          </div>
-        </dl>
+            <dd>{balancesReady ? money(working) : <Skeleton />}</dd>
+          </dl>
+        </div>
       </header>
 
-      <div className="toolbar">
-        <button type="button" disabled={!canAdd} onClick={() => setEditing('new')}>
+      <div className="toolbar register-toolbar">
+        <button type="button" disabled={!canAdd} onClick={() => void openEditor('new')}>
           + Add Transaction
         </button>
         <button
           type="button"
           className="secondary"
-          disabled={accounts.filter((a) => !a.closed).length < 2}
+          disabled={!canTransfer}
           onClick={() => setTransferring(true)}
         >
           + Add Transfer
@@ -159,16 +290,52 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
         )}
         {account?.type === 'investment' && <InvestmentGoals accountId={account.id} />}
         {account?.type === 'investment' && <InvestmentDetails accountId={account.id} />}
-        {account && <AccountMenu account={account} run={run} />}
+        {account && (
+          <AccountMenu
+            account={account}
+            transactionCount={transactions.data?.length ?? null}
+            run={run}
+            ask={ask}
+            onRename={() => setRenaming(true)}
+          />
+        )}
+        {accountsLoaded && !canAdd && (
+          <span className="muted toolbar-hint">
+            This account is closed. Reopen it from the ⋯ menu to add transactions.
+          </span>
+        )}
+        {accountsLoaded && canAdd && !canTransfer && (
+          <span className="muted toolbar-hint">A transfer needs two open accounts.</span>
+        )}
       </div>
+
+      <RegisterFilterBar
+        filter={activeFilter}
+        onChange={changeFilter}
+        groups={groups.data ?? []}
+        accounts={accountId === null ? accounts : undefined}
+        summary={
+          summary && isFiltered(activeFilter)
+            ? `${summary} · balances above include every transaction`
+            : summary
+        }
+      />
 
       {error && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
+      {transactions.error && (
+        <div className="banner warn load-error" role="alert">
+          <span>Couldn’t load transactions: {messageOf(transactions.error)}</span>
+          <button type="button" className="secondary" onClick={transactions.reload}>
+            Try again
+          </button>
+        </div>
+      )}
 
-      <div className="table-wrap">
+      <div className="table-wrap" aria-busy={transactions.loading}>
         <table className={editing ? 'register editing' : 'register'}>
           <thead>
             <tr>
@@ -182,9 +349,9 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
               <th scope="col" className="num">
                 Inflow
               </th>
-              <th scope="col" className="cleared-col">
+              <th scope="col" className="cleared-col" title="Cleared">
                 <span className="sr-only">Cleared</span>
-                <span aria-hidden>C</span>
+                <span aria-hidden>✓</span>
               </th>
             </tr>
           </thead>
@@ -202,9 +369,11 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                 payees={payees}
                 deposits={deposits}
                 hasFund={hasFund}
-                onCancel={() => setEditing(null)}
+                ask={ask}
+                onDirtyChange={setDirty}
+                onCancel={closeEditor}
                 onSave={(input) =>
-                  run(() =>
+                  write(() =>
                     budget.createTransaction({
                       accountId: input.accountId,
                       date: input.date,
@@ -214,11 +383,11 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                       reversesId: input.reversesId,
                       emergency: input.emergency,
                     }),
-                  ).then(() => undefined)
+                  )
                 }
               />
             )}
-            {(transactions.data ?? []).map((t) =>
+            {shown.slice(0, shownCount).map((t) =>
               editing === t.id ? (
                 <TransactionRow
                   key={t.id}
@@ -231,8 +400,10 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                   payees={payees}
                   deposits={deposits}
                   hasFund={hasFund}
-                  onCancel={() => setEditing(null)}
-                  transfer={transferInfo(t, accountById)}
+                  ask={ask}
+                  onDirtyChange={setDirty}
+                  onCancel={closeEditor}
+                  transfer={transferInfo(t, names.account)}
                   onSave={async (input) => {
                     // A transfer has no payee or splits; its amount carries to the other leg.
                     const patch = t.transferPairId
@@ -250,85 +421,148 @@ export function RegisterView({ accountId, accounts, accountsLoaded, onAddAccount
                           reversesId: input.reversesId,
                           emergency: input.emergency,
                         }
-                    await run(() => budget.updateTransaction(t.id, patch))
-                    setEditing(null)
+                    await write(() => budget.updateTransaction(t.id, patch))
+                    closeEditor()
                   }}
                   onDelete={async () => {
-                    if (!confirm('Delete this transaction?')) return
-                    await run(() => budget.deleteTransaction(t.id))
-                    setEditing(null)
+                    const ok = await ask(deleteQuestion(t, names.account))
+                    if (!ok) return
+                    await write(() => budget.deleteTransaction(t.id))
+                    closeEditor()
                   }}
                 />
               ) : (
-                <tr
+                <TransactionLine
                   key={t.id}
-                  className="txn-row"
-                  tabIndex={0}
-                  onClick={() => setEditing(t.id)}
-                  onKeyDown={(e) =>
-                    e.key === 'Enter' && e.target === e.currentTarget && setEditing(t.id)
+                  t={t}
+                  showAccountColumn={showAccountColumn}
+                  names={names}
+                  onOpen={() => void openEditor(t.id)}
+                  onToggleCleared={() =>
+                    void run(() => budget.updateTransaction(t.id, { cleared: !t.cleared }))
                   }
-                >
-                  <td>{shortDate(t.date)}</td>
-                  {showAccountColumn && <td>{accountById.get(t.accountId)?.name ?? ''}</td>}
-                  <td>
-                    {payeeLabel(t, accountById)}
-                    {t.emergency && (
-                      <>
-                        {' '}
-                        <span className="tag emergency" title="Paid for from the emergency fund">
-                          Emergency
-                        </span>
-                      </>
-                    )}
-                    {!t.approved && (
-                      <>
-                        {' '}
-                        <a className="tag" href="#/inbox" onClick={(e) => e.stopPropagation()}>
-                          New
-                        </a>
-                      </>
-                    )}
-                  </td>
-                  <td>{categoryLabel(t, categoryName, goalName, accountById)}</td>
-                  <td className="num">{t.amount < 0 ? money(-t.amount) : ''}</td>
-                  <td className="num">{t.amount > 0 ? money(t.amount) : ''}</td>
-                  <td className="cleared-col">
-                    <button
-                      type="button"
-                      className={t.cleared ? 'clear-toggle on' : 'clear-toggle'}
-                      aria-pressed={t.cleared}
-                      aria-label={`Cleared: ${t.payee ?? 'transaction'} on ${shortDate(t.date)}`}
-                      disabled={t.reconciled}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void run(() => budget.updateTransaction(t.id, { cleared: !t.cleared }))
-                      }}
-                    >
-                      {t.reconciled ? '🔒' : 'C'}
-                    </button>
-                  </td>
-                </tr>
+                />
               ),
             )}
           </tbody>
         </table>
-        {!transactions.loading && transactions.data?.length === 0 && editing !== 'new' && (
-          <p className="empty">No transactions yet.</p>
+        {!transactions.loading && shown.length === 0 && editing !== 'new' && (
+          <p className="empty">
+            {isFiltered(activeFilter)
+              ? 'No transactions match these filters.'
+              : 'No transactions yet.'}
+          </p>
+        )}
+        {shown.length > shownCount && (
+          <p className="register-more">
+            <span className="muted">
+              Showing {shownCount.toLocaleString()} of {shown.length.toLocaleString()}
+            </span>{' '}
+            <button
+              type="button"
+              onClick={() => setPaging({ scope, size: shownCount + PAGE_SIZE })}
+            >
+              Show more
+            </button>
+          </p>
         )}
       </div>
 
       {transferring && (
         <TransferDialog
           onClose={() => setTransferring(false)}
-          accounts={accounts.filter((a) => !a.closed)}
+          accounts={openAccounts}
           defaultFromId={accountId}
         />
       )}
       {account && reconciling && (
         <ReconcileDialog onClose={() => setReconciling(false)} account={account} />
       )}
+      {account && renaming && (
+        <RenameAccountSheet account={account} onClose={() => setRenaming(false)} />
+      )}
+      {confirmDialog}
     </div>
+  )
+}
+
+interface Names {
+  category: Map<string, string>
+  goal: Map<string, string>
+  account: Map<string, Account>
+}
+
+function TransactionLine(props: {
+  t: Transaction
+  showAccountColumn: boolean
+  names: Names
+  onOpen: () => void
+  onToggleCleared: () => void
+}) {
+  const { t, names } = props
+  const category = categoryLabel(t, names.category, names.goal, names.account)
+  const payee = payeeLabel(t, names.account)
+  const state = t.reconciled ? 'Cleared and reconciled' : t.cleared ? 'Cleared' : 'Not cleared'
+  return (
+    // The whole row is a click target for the mouse; the payee button is what the keyboard and
+    // screen readers use, and its click bubbles up here.
+    <tr className="txn-row" data-txn={t.id} onClick={props.onOpen}>
+      <td>{shortDate(t.date)}</td>
+      {props.showAccountColumn && <td>{names.account.get(t.accountId)?.name ?? ''}</td>}
+      <td>
+        <button type="button" className="row-open">
+          {payee || <span className="sr-only">Edit transaction</span>}
+        </button>
+        {t.emergency && (
+          <>
+            {' '}
+            <span className="tag emergency" title="Paid for from the emergency fund">
+              Emergency
+            </span>
+          </>
+        )}
+        {!t.approved && (
+          <>
+            {' '}
+            <a
+              className="tag"
+              href="#/inbox"
+              title="Imported from your bank and waiting for approval in the inbox"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Needs review
+            </a>
+          </>
+        )}
+      </td>
+      <td className={category === 'Uncategorized' ? 'uncategorized' : undefined}>{category}</td>
+      <td className="num">{t.amount < 0 ? money(-t.amount) : ''}</td>
+      <td className="num">{t.amount > 0 ? money(t.amount) : ''}</td>
+      <td className="cleared-col">
+        <button
+          type="button"
+          className={
+            t.reconciled ? 'clear-toggle on locked' : t.cleared ? 'clear-toggle on' : 'clear-toggle'
+          }
+          aria-pressed={t.cleared}
+          aria-label={`${state}: ${t.payee ?? 'transaction'} on ${shortDate(t.date)}`}
+          title={
+            t.reconciled
+              ? 'Reconciled, so it is locked'
+              : t.cleared
+                ? 'Cleared. Press to mark it not cleared.'
+                : 'Not cleared. Press to mark it cleared.'
+          }
+          disabled={t.reconciled}
+          onClick={(e) => {
+            e.stopPropagation()
+            props.onToggleCleared()
+          }}
+        >
+          {t.reconciled ? '🔒' : t.cleared ? '✓' : ''}
+        </button>
+      </td>
+    </tr>
   )
 }
 
@@ -336,6 +570,31 @@ const payeeLabel = (t: Transaction, accounts: Map<string, Account>) =>
   t.transferPairId
     ? `Transfer: ${accounts.get(t.transferAccountId ?? '')?.name ?? 'removed account'}`
     : (t.payee ?? '')
+
+/** What to ask before deleting; says what else goes with it. */
+function deleteQuestion(t: Transaction, accounts: Map<string, Account>): ConfirmOptions {
+  const other = t.transferPairId ? accounts.get(t.transferAccountId ?? '') : undefined
+  return {
+    title: 'Delete this transaction?',
+    message: (
+      <>
+        <p>
+          {payeeLabel(t, accounts) || 'No payee'}, {money(Math.abs(t.amount))} on{' '}
+          {shortDate(t.date)}
+        </p>
+        {t.transferPairId && (
+          <p>
+            It is one side of a transfer, so the other side
+            {other ? ` in ${other.name}` : ''} is deleted too.
+          </p>
+        )}
+        {t.importId !== null && <p>It came from your bank. It won’t be imported again.</p>}
+      </>
+    ),
+    confirmLabel: 'Delete transaction',
+    danger: true,
+  }
+}
 
 /** What the editor needs to know about a transfer leg; null for an ordinary transaction. */
 function transferInfo(t: Transaction, accounts: Map<string, Account>) {
@@ -361,7 +620,7 @@ function categoryLabel(
   if (id) {
     const name = names.get(id) ?? 'Unknown category'
     const goal = t.splits[0]?.goalId
-    return goal ? `${name}: ${goalName(goalNames, goal)}` : name
+    return goal ? `${name}: ${goalNames.get(goal) ?? 'Unknown goal'}` : name
   }
   if (!account?.onBudget) return ''
   if (t.transferPairId) {
@@ -372,26 +631,27 @@ function categoryLabel(
   return t.amount > 0 ? 'Inflow: Ready to Assign' : 'Uncategorized'
 }
 
-const goalName = (names: Map<string, string>, id: string) => names.get(id) ?? 'Unknown goal'
-
 function AccountMenu({
   account,
+  transactionCount,
   run,
+  ask,
+  onRename,
 }: {
   account: Account
+  /** Null while they are loading. */
+  transactionCount: number | null
   run: (fn: () => Promise<unknown>) => Promise<void>
+  ask: (options: ConfirmOptions) => Promise<boolean>
+  onRename: () => void
 }) {
+  // The core refuses an account with transactions, so say so here instead of failing afterwards.
+  const used = transactionCount !== null && transactionCount > 0
   return (
     <Menu
       label={`Options for ${account.name}`}
       items={[
-        {
-          label: 'Rename',
-          onSelect: () => {
-            const name = prompt('Rename account', account.name)
-            if (name !== null) void run(() => budget.updateAccount(account.id, { name }))
-          },
-        },
+        { label: 'Rename', onSelect: onRename },
         {
           label: account.closed ? 'Reopen' : 'Close',
           onSelect: () =>
@@ -399,468 +659,24 @@ function AccountMenu({
         },
         {
           label: 'Delete',
-          onSelect: () => {
-            if (!confirm(`Delete ${account.name}?`)) return
-            void run(async () => {
-              await budget.deleteAccount(account.id)
-              location.hash = '#/budget'
-            })
-          },
+          disabled: used,
+          title: used ? 'It has transactions. Close the account instead.' : undefined,
+          onSelect: () =>
+            void (async () => {
+              const ok = await ask({
+                title: `Delete ${account.name}?`,
+                message: <p>It has no transactions. This can’t be undone.</p>,
+                confirmLabel: 'Delete account',
+                danger: true,
+              })
+              if (!ok) return
+              await run(async () => {
+                await budget.deleteAccount(account.id)
+                location.hash = '#/budget'
+              })
+            })(),
         },
       ]}
     />
-  )
-}
-
-const plain = (amount: number) => formatCents(cents(amount), { symbol: false })
-
-interface Entry {
-  accountId: string
-  date: string
-  payee: string
-  splits: SplitInput[]
-  /** Pre-tax pay of a deposit, for income rules on a gross basis; null clears it. */
-  grossAmount: number | null
-  /** The deposit this outflow takes back; null for none. */
-  reversesId: string | null
-  /** Paid for from the emergency fund. */
-  emergency: boolean
-}
-
-/** A split line as typed: a category and an amount in either the outflow or inflow box. */
-interface Line {
-  categoryId: string
-  /** A goal of `categoryId` the line is spent from, or ''. */
-  goalId: string
-  /** Tags the line as a need or a want whatever its category says, or '' to follow the category. */
-  needOrWant: NeedOrWant | ''
-  outflow: string
-  inflow: string
-}
-
-const GOAL_PREFIX = 'goal:'
-
-const emptyLine = (): Line => ({
-  categoryId: '',
-  goalId: '',
-  needOrWant: '',
-  outflow: '',
-  inflow: '',
-})
-
-const lineOf = (s: TransactionSplit): Line => ({
-  categoryId: s.categoryId ?? '',
-  goalId: s.goalId ?? '',
-  needOrWant: s.needOrWant ?? '',
-  outflow: s.amount < 0 ? plain(-s.amount) : '',
-  inflow: s.amount > 0 ? plain(s.amount) : '',
-})
-
-/** The signed cents a line holds: 0 when empty, a message when it can't be read. */
-function amountOf(line: Line): number | string {
-  const out = line.outflow.trim() === '' ? 0 : parseCents(line.outflow)
-  const into = line.inflow.trim() === '' ? 0 : parseCents(line.inflow)
-  if (out === null || into === null) return 'Enter amounts as dollars, like 42.50'
-  if (out < 0 || into < 0) return 'Amounts must be positive; use Inflow for money in'
-  return into - out
-}
-
-function TransactionRow(props: {
-  transaction: Transaction | null
-  /** Set when editing one leg of a transfer: no payee, no splits, a category only sometimes. */
-  transfer: { label: string; categoryEditable: boolean } | null
-  accounts: Account[]
-  defaultAccountId: string
-  showAccountColumn: boolean
-  groups: CategoryGroup[]
-  goals: Goal[]
-  payees: string[]
-  /** Income that an outflow could take back (a reversed paycheck). */
-  deposits: Transaction[]
-  /** Whether the household has an emergency fund to pay from. */
-  hasFund: boolean
-  onCancel: () => void
-  onSave: (entry: Entry) => Promise<void>
-  onDelete?: () => Promise<void>
-}) {
-  const { transaction: t } = props
-  const [fields, setFields] = useState(() => ({
-    accountId: props.defaultAccountId,
-    date: shortDate(t?.date ?? todayIso()),
-    payee: t?.payee ?? '',
-  }))
-  const [lines, setLines] = useState<Line[]>(() => (t ? t.splits.map(lineOf) : [emptyLine()]))
-  const [split, setSplit] = useState(lines.length > 1)
-  const [gross, setGross] = useState(t?.grossAmount ? plain(t.grossAmount) : '')
-  const [reversesId, setReversesId] = useState(t?.reversesId ?? '')
-  const [emergency, setEmergency] = useState(t?.emergency ?? false)
-  const [error, setError] = useState<string | null>(null)
-  const set = (patch: Partial<typeof fields>) => setFields({ ...fields, ...patch })
-  const setLine = (i: number, patch: Partial<Line>) =>
-    setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)))
-  const account = props.accounts.find((a) => a.id === fields.accountId)
-
-  const amounts = lines.map(amountOf)
-  const total = amounts.reduce<number>((n, a) => n + (typeof a === 'number' ? a : 0), 0)
-  // Income rules look at uncategorized inflows, and a reversal is an outflow from the same account.
-  const isIncome = !props.transfer && account?.onBudget !== false && total > 0
-  const showGross = isIncome && lines.every((l) => !l.categoryId)
-  const reversible = props.deposits.filter(
-    (d) => d.accountId === fields.accountId && d.id !== t?.id,
-  )
-  const showReverses =
-    !props.transfer &&
-    account?.onBudget !== false &&
-    total < 0 &&
-    (reversible.length > 0 || !!reversesId)
-
-  // Rare, so it sits quietly among the editor's buttons. It can always be switched off; switching
-  // on needs a fund and spending from a budget account.
-  const showEmergency =
-    !props.transfer && account?.onBudget !== false && (props.hasFund || !!t?.emergency)
-
-  function toggleSplit() {
-    setError(null)
-    if (!split) {
-      setLines([...lines, emptyLine()])
-      return setSplit(true)
-    }
-    const bad = amounts.find((a) => typeof a === 'string')
-    if (bad) return setError(bad as string)
-    // Back to one line: the first line's category carries the whole amount.
-    setLines([
-      {
-        categoryId: lines[0]!.categoryId,
-        goalId: lines[0]!.goalId,
-        needOrWant: lines[0]!.needOrWant,
-        outflow: total < 0 ? plain(-total) : '',
-        inflow: total > 0 ? plain(total) : '',
-      },
-    ])
-    setSplit(false)
-  }
-
-  async function save() {
-    setError(null)
-    const date = parseDate(fields.date)
-    if (!date) return setError('Enter the date like 10/28/2026')
-    const bad = amounts.find((a) => typeof a === 'string')
-    if (bad) return setError(bad as string)
-    const splits: SplitInput[] = lines.map((l, i) => ({
-      categoryId: l.categoryId || null,
-      goalId: l.goalId || null,
-      needOrWant: l.needOrWant || null,
-      amount: amounts[i] as number,
-    }))
-    if (splits.some((s) => s.amount === 0)) {
-      return setError(
-        split ? 'Every split needs an outflow or an inflow' : 'Enter an outflow or an inflow',
-      )
-    }
-    let grossAmount: number | null = null
-    if (showGross && gross.trim() !== '') {
-      const parsed = parseCents(gross)
-      if (parsed === null || parsed <= 0)
-        return setError('Enter gross pay as dollars, like 3100.00')
-      grossAmount = parsed
-    }
-    try {
-      await props.onSave({
-        accountId: fields.accountId,
-        date,
-        payee: fields.payee,
-        splits,
-        grossAmount,
-        reversesId: showReverses ? reversesId || null : null,
-        emergency: showEmergency && emergency,
-      })
-      if (!t) {
-        setFields({ ...fields, payee: '' })
-        setLines([emptyLine()])
-        setSplit(false)
-        setGross('')
-        setReversesId('')
-        setEmergency(false)
-      }
-    } catch (err) {
-      setError(messageOf(err))
-    }
-  }
-
-  const blankFor = (line: Line) =>
-    account?.onBudget === false
-      ? '—'
-      : line.inflow.trim() !== '' && line.outflow.trim() === ''
-        ? 'Inflow: Ready to Assign'
-        : 'Uncategorized'
-  const label = t ? 'Edit transaction' : 'New transaction'
-  const listId = `payees-${t?.id ?? 'new'}`
-  const columns = props.showAccountColumn ? 7 : 6
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
-      e.preventDefault()
-      void save()
-    }
-    if (e.key === 'Escape') props.onCancel()
-  }
-
-  /** A goal option stands for its category plus that goal; a category option clears the goal. */
-  const pick = (value: string): Pick<Line, 'categoryId' | 'goalId'> => {
-    if (!value.startsWith(GOAL_PREFIX)) return { categoryId: value, goalId: '' }
-    const goalId = value.slice(GOAL_PREFIX.length)
-    return { categoryId: props.goals.find((g) => g.id === goalId)?.categoryId ?? '', goalId }
-  }
-
-  const defaultTag = (categoryId: string) =>
-    props.groups.flatMap((g) => g.categories).find((c) => c.id === categoryId)?.needOrWant ===
-    'need'
-      ? 'need'
-      : 'want'
-
-  const categorySelect = (line: Line, i: number, name: string) => (
-    <>
-      <select
-        aria-label={name}
-        value={line.goalId ? `${GOAL_PREFIX}${line.goalId}` : line.categoryId}
-        disabled={props.transfer !== null && !props.transfer.categoryEditable}
-        onChange={(e) => {
-          const picked = pick(e.target.value)
-          // An override belongs to the category it was chosen for.
-          setLine(i, picked.categoryId === line.categoryId ? picked : { ...picked, needOrWant: '' })
-        }}
-      >
-        <option value="">{blankFor(line)}</option>
-        {props.groups
-          .filter((g) => !g.hidden)
-          .map((g) => (
-            <optgroup key={g.id} label={g.name}>
-              {g.categories
-                .filter((c) => !c.creditCardAccountId && (!c.hidden || c.id === line.categoryId))
-                .flatMap((c) => [
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>,
-                  // Spending from a goal is a planned draw-down of that goal's balance.
-                  ...props.goals
-                    .filter(
-                      (goal) =>
-                        goal.categoryId === c.id && (!goal.archived || goal.id === line.goalId),
-                    )
-                    .map((goal) => (
-                      <option key={goal.id} value={`${GOAL_PREFIX}${goal.id}`}>
-                        {`\u00a0\u00a0↳ ${goal.name}${goal.archived ? ' (archived)' : ''}`}
-                      </option>
-                    )),
-                ])}
-            </optgroup>
-          ))}
-      </select>
-      {line.categoryId && !props.transfer && (
-        <select
-          className="need-want-select"
-          aria-label={`Need or want${name === 'Category' ? '' : name.slice('Category'.length)}`}
-          value={line.needOrWant}
-          onChange={(e) => setLine(i, { needOrWant: e.target.value as NeedOrWant | '' })}
-        >
-          <option value="">Default ({defaultTag(line.categoryId)})</option>
-          <option value="need">Need</option>
-          <option value="want">Want</option>
-        </select>
-      )}
-    </>
-  )
-
-  const amountInputs = (line: Line, i: number, suffix: string) => (
-    <>
-      <td className="num" data-label="Outflow">
-        <input
-          aria-label={`Outflow${suffix}`}
-          inputMode="decimal"
-          placeholder="0.00"
-          value={line.outflow}
-          onChange={(e) => setLine(i, { outflow: e.target.value })}
-        />
-      </td>
-      <td className="num" data-label="Inflow">
-        <input
-          aria-label={`Inflow${suffix}`}
-          inputMode="decimal"
-          placeholder="0.00"
-          value={line.inflow}
-          onChange={(e) => setLine(i, { inflow: e.target.value })}
-        />
-      </td>
-    </>
-  )
-
-  return (
-    <>
-      <tr className="edit-row" aria-label={label} onKeyDown={onKeyDown}>
-        <td data-label="Date">
-          <input
-            aria-label="Date"
-            value={fields.date}
-            onChange={(e) => set({ date: e.target.value })}
-          />
-        </td>
-        {props.showAccountColumn && (
-          <td data-label="Account">
-            <select
-              aria-label="Account"
-              value={fields.accountId}
-              disabled={!!t}
-              onChange={(e) => set({ accountId: e.target.value })}
-            >
-              {props.accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </td>
-        )}
-        <td data-label="Payee">
-          <input
-            autoFocus
-            aria-label="Payee"
-            list={listId}
-            value={props.transfer ? props.transfer.label : fields.payee}
-            disabled={props.transfer !== null}
-            onChange={(e) => set({ payee: e.target.value })}
-          />
-          <datalist id={listId}>
-            {props.payees.map((p) => (
-              <option key={p} value={p} />
-            ))}
-          </datalist>
-        </td>
-        {split ? (
-          <>
-            <td data-label="Category">
-              <span className="split-total">Split ({lines.length})</span>
-            </td>
-            <td className="num" data-label="Outflow">
-              {total < 0 ? money(-total) : ''}
-            </td>
-            <td className="num" data-label="Inflow">
-              {total > 0 ? money(total) : ''}
-            </td>
-          </>
-        ) : (
-          <>
-            <td data-label="Category">{categorySelect(lines[0]!, 0, 'Category')}</td>
-            {amountInputs(lines[0]!, 0, '')}
-          </>
-        )}
-        <td />
-      </tr>
-      {split &&
-        lines.map((line, i) => (
-          <tr
-            key={i}
-            className="edit-row split-line"
-            aria-label={`Split ${i + 1}`}
-            onKeyDown={onKeyDown}
-          >
-            <td className="split-gap" colSpan={props.showAccountColumn ? 3 : 2} />
-            <td data-label="Category">{categorySelect(line, i, `Category ${i + 1}`)}</td>
-            {amountInputs(line, i, ` ${i + 1}`)}
-            <td className="cleared-col">
-              <button
-                type="button"
-                className="icon-button"
-                aria-label={`Remove split ${i + 1}`}
-                disabled={lines.length <= 2}
-                onClick={() => setLines(lines.filter((_, j) => j !== i))}
-              >
-                ✕
-              </button>
-            </td>
-          </tr>
-        ))}
-      <tr className="edit-actions">
-        <td colSpan={columns}>
-          {error && (
-            <span className="error" role="alert">
-              {error}
-            </span>
-          )}
-          {showGross && (
-            <label className="inline-field">
-              Gross pay
-              <input
-                aria-label="Gross pay"
-                inputMode="decimal"
-                placeholder="optional"
-                value={gross}
-                onChange={(e) => setGross(e.target.value)}
-              />
-            </label>
-          )}
-          {showReverses && (
-            <label className="inline-field">
-              Takes back
-              <select
-                aria-label="Takes back the deposit"
-                value={reversesId}
-                onChange={(e) => setReversesId(e.target.value)}
-              >
-                <option value="">No deposit</option>
-                {reversible.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {`${shortDate(d.date)} ${d.payee ?? 'Deposit'} ${money(d.amount)}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {showEmergency && (
-            <label
-              className="inline-field emergency-toggle"
-              title="Moves the money from the emergency fund into this category"
-            >
-              <input
-                type="checkbox"
-                aria-label="Pay from the emergency fund"
-                checked={emergency}
-                onChange={(e) => setEmergency(e.target.checked)}
-              />
-              Emergency
-            </label>
-          )}
-          <span className="spacer" />
-          {props.onDelete && (
-            <button
-              type="button"
-              className="secondary danger"
-              onClick={() => void props.onDelete!()}
-            >
-              Delete
-            </button>
-          )}
-          {split && (
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => setLines([...lines, emptyLine()])}
-            >
-              + Add split
-            </button>
-          )}
-          {!props.transfer && (
-            <button type="button" className="secondary" onClick={toggleSplit}>
-              {split ? 'Unsplit' : 'Split'}
-            </button>
-          )}
-          <button type="button" className="secondary" onClick={props.onCancel}>
-            Cancel
-          </button>
-          <button type="button" onClick={() => void save()}>
-            Save
-          </button>
-        </td>
-      </tr>
-    </>
   )
 }

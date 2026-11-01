@@ -1,35 +1,56 @@
 import { type Category, type CategoryBalance, type Goal } from '@budget-fi/core'
-import { Fragment, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import { AssignedInput } from './AssignedInput.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
+import { getCollapsedGroups, setCollapsedGroups } from './device-settings.ts'
 import { messageOf } from './errors.ts'
 import { fundPercent, fundStatus } from './fund-text.ts'
+import { dropTarget, moveNextTo, useDragReorder } from './drag-reorder.ts'
 import { holdingWarning } from './goal-text.ts'
 import { money, monthLabel, monthOf, shiftMonth, todayIso } from './format.ts'
 import { GoalForm, GoalRows } from './GoalRows.tsx'
 import { CategorySheet, GroupSheet } from './ManageSheet.tsx'
+import {
+  categoryFigures,
+  loadPeek,
+  PeekCells,
+  peekFor,
+  useMediaQuery,
+  WIDE,
+  type PeekFigures,
+} from './peek.tsx'
 import { retirementTag } from './retirement-text.ts'
 import { RetirementStatusDialog } from './RetirementStatusDialog.tsx'
 import { hrefFor } from './route.ts'
+import { Skeleton } from './Skeleton.tsx'
 
 type Run = (fn: () => Promise<unknown>) => Promise<void>
 
 const ZERO: CategoryBalance = { categoryId: '', assigned: 0, activity: 0, available: 0 }
-const NONE = '—'
 
-export function BudgetView({ today }: { today: Date }) {
+export function BudgetView({ today, month: routeMonth }: { today: Date; month: string | null }) {
   const refresh = useRefresh()
-  const [month, setMonth] = useState(() => monthOf(todayIso(today)))
+  const thisMonth = monthOf(todayIso(today))
+  // The open month lives in the URL, so Back from the register lands on the month you left. A
+  // change replaces the history entry: Back leaves the budget instead of stepping through months.
+  const month = routeMonth ?? thisMonth
+  const setMonth = (next: string) =>
+    location.replace(next === thisMonth ? hrefFor.budget : hrefFor.budgetFor(next))
   const groups = useBudgetQuery(() => budget.listCategoryGroups())
-  // Tagged with their month: a query keeps its last answer while the next one loads, and the
-  // previous month's figures must not pass for this month's.
+  // Tagged with their month: a query keeps its last answer while the next one loads. That answer
+  // stays on screen, dimmed and read-only, until this month's arrives, so the table doesn't
+  // blank out on every month change; it must never pass for this month's.
   const balances = useBudgetQuery(
     () => budget.getMonthBalances(month).then((rows) => ({ month, rows })),
     [month],
   )
   const readyToAssign = useBudgetQuery(
     () => budget.getReadyToAssign(month).then((amount) => ({ month, amount })),
+    [month],
+  )
+  const income = useBudgetQuery(
+    () => budget.getMonthIncome(month).then((amount) => ({ month, amount })),
     [month],
   )
   const goals = useBudgetQuery(() => budget.listGoals())
@@ -40,10 +61,7 @@ export function BudgetView({ today }: { today: Date }) {
   const accounts = useBudgetQuery(() => budget.listAccounts())
   // The emergency fund, if the household has one: its target averages Need spending up to the last
   // complete month (or the open month when that is earlier), and its balance is the open month's.
-  const averageThrough =
-    month < shiftMonth(monthOf(todayIso(today)), -1)
-      ? month
-      : shiftMonth(monthOf(todayIso(today)), -1)
+  const averageThrough = month < shiftMonth(thisMonth, -1) ? month : shiftMonth(thisMonth, -1)
   const fundQuery = useBudgetQuery(
     () =>
       budget
@@ -53,8 +71,24 @@ export function BudgetView({ today }: { today: Date }) {
   )
   const fund = fundQuery.data?.month === month ? fundQuery.data.fund : undefined
   const holdings = useBudgetQuery(() => budget.getAccountHoldings(month), [month])
+  // The months either side, read-only, beside the open one. A phone or a shrunk window has no
+  // room for them, so it doesn't ask. Clicking one's heading makes it the open month, and so
+  // editable.
+  const wide = useMediaQuery(WIDE)
+  const prevMonth = shiftMonth(month, -1)
+  const nextMonth = shiftMonth(month, 1)
+  const prevQuery = useBudgetQuery(
+    () => (wide ? loadPeek(prevMonth) : Promise.resolve(undefined)),
+    [prevMonth, wide],
+  )
+  const nextQuery = useBudgetQuery(
+    () => (wide ? loadPeek(nextMonth) : Promise.resolve(undefined)),
+    [nextMonth, wide],
+  )
+  const prev = wide ? peekFor(prevQuery, prevMonth) : undefined
+  const next = wide ? peekFor(nextQuery, nextMonth) : undefined
   const [showHidden, setShowHidden] = useState(false)
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(getCollapsedGroups)
   const [addingGroup, setAddingGroup] = useState(false)
   const [addingTo, setAddingTo] = useState<string | null>(null)
   const [showArchived, setShowArchived] = useState(false)
@@ -63,7 +97,6 @@ export function BudgetView({ today }: { today: Date }) {
   const [retiring, setRetiring] = useState<Category | null>(null)
   const [managing, setManaging] = useState<{ kind: 'category' | 'group'; id: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const thisMonth = monthOf(todayIso(today))
 
   const run: Run = async (fn) => {
     setError(null)
@@ -81,9 +114,44 @@ export function BudgetView({ today }: { today: Date }) {
     refresh()
   }
 
-  // Figures belong to this month only once they have arrived for it.
-  const figuresReady = balances.data?.month === month
-  const goalsReady = goalBalances.data?.month === month
+  // Dragging a handle reorders groups, or the categories inside one group; every id is sent, so
+  // hidden ones keep their place.
+  const drag = useDragReorder((dragged, target, after) => {
+    if (dragged.kind === 'group') {
+      const ids = moveNextTo(
+        all.map((g) => g.id),
+        dragged.id,
+        target,
+        after,
+      )
+      if (ids) void run(() => budget.reorderCategoryGroups(ids))
+      return
+    }
+    const group = all.find((g) => g.id === dragged.scope)
+    const ids =
+      group &&
+      moveNextTo(
+        group.categories.map((c) => c.id),
+        dragged.id,
+        target,
+        after,
+      )
+    if (ids) void run(() => budget.reorderCategories(dragged.scope, ids))
+  })
+  /** Classes that draw the drop line and dim the row being carried. */
+  const dragClass = (kind: 'category' | 'group', id: string) => {
+    const parts: string[] = []
+    if (drag.dragging?.kind === kind && drag.dragging.id === id) parts.push('drag-source')
+    if (drag.over?.kind === kind && drag.over.id === id)
+      parts.push(drag.over.after ? 'drop-after' : 'drop-before')
+    return parts
+  }
+
+  // `haveFigures`: there is something to show. `settled`: it is this month's, so it may be edited.
+  const haveFigures = balances.data !== undefined
+  const settled = balances.data?.month === month
+  const haveGoals = goalBalances.data !== undefined
+  const goalsSettled = goalBalances.data?.month === month
   const failed = [groups, balances, readyToAssign, goalBalances, goals, accounts].find(
     (q) => q.error,
   )
@@ -104,7 +172,7 @@ export function BudgetView({ today }: { today: Date }) {
   const goalsOf = (categoryId: string): Goal[] =>
     allGoals.filter((g) => g.categoryId === categoryId && (showArchived || !g.archived))
   const balanceOf = (id: string) =>
-    (figuresReady && balances.data?.rows.find((b) => b.categoryId === id)) || ZERO
+    (haveFigures && balances.data?.rows.find((b) => b.categoryId === id)) || ZERO
   const sum = (cats: Category[]) =>
     cats.reduce(
       (t, c) => {
@@ -117,8 +185,27 @@ export function BudgetView({ today }: { today: Date }) {
       },
       { assigned: 0, activity: 0, available: 0 },
     )
+  /** A neighbouring month's Assigned and Available added up over `cats`. */
+  const sumPeek = (cats: Category[], peek: typeof prev): PeekFigures | undefined =>
+    peek &&
+    cats.reduce(
+      (t, c) => {
+        const f = categoryFigures(peek, c.id)!
+        return { assigned: t.assigned + f.assigned, available: t.available + f.available }
+      },
+      { assigned: 0, available: 0 },
+    )
   const totals = sum(shown.flatMap((g) => g.categories))
+  const shownCategories = shown.flatMap((g) => g.categories)
+  // a row that spans the table: the open month's three figures, and two for each neighbour
+  const span = wide ? 8 : 4
   const label = monthLabel(month)
+  // The same categories the monthly review would list; hidden ones count, a card's payment doesn't.
+  const overspent = settled
+    ? all
+        .flatMap((g) => g.categories)
+        .filter((c) => c.creditCardAccountId === null && balanceOf(c.id).available < 0).length
+    : 0
   const accountList = accounts.data ?? []
   const warnings = (holdings.data ?? []).flatMap((h) => {
     const text = holdingWarning(
@@ -129,16 +216,32 @@ export function BudgetView({ today }: { today: Date }) {
   })
 
   function toggle(id: string) {
-    const next = new Set(collapsed)
+    // only groups that still exist are kept, so deleted ones don't pile up in storage
+    const next = new Set([...collapsed].filter((c) => all.some((g) => g.id === c)))
     if (!next.delete(id)) next.add(id)
     setCollapsed(next)
+    setCollapsedGroups(next)
   }
 
-  async function assign(category: Category, delta: number) {
-    await run(() =>
+  /** Rejects on failure: the box that asked shows the reason beside itself. */
+  function assign(category: Category, delta: number) {
+    return write(() =>
       budget.allocate({ month, categoryId: category.id, amount: delta, note: 'Set in budget' }),
     )
   }
+
+  // The column headings stick just under the page header, whose height changes with its banners.
+  const stickyRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = stickyRef.current
+    if (!el) return
+    const page = el.parentElement!
+    const measure = () => page.style.setProperty('--budget-sticky-h', `${el.offsetHeight}px`)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   const managedCategory =
     managing?.kind === 'category'
@@ -148,8 +251,8 @@ export function BudgetView({ today }: { today: Date }) {
     managing?.kind === 'group' ? all.find((g) => g.id === managing.id) : undefined
 
   return (
-    <div className="page">
-      <div className="budget-sticky">
+    <div className={wide ? 'page page-wide' : 'page'}>
+      <div className="budget-sticky" ref={stickyRef}>
         <header className="page-header budget-header">
           <div className="month-nav">
             <button
@@ -171,15 +274,27 @@ export function BudgetView({ today }: { today: Date }) {
             >
               ›
             </button>
-            {month !== thisMonth && (
-              <button type="button" className="secondary" onClick={() => setMonth(thisMonth)}>
-                This month
-              </button>
-            )}
+            {/* always here, so the header doesn't shift when you leave this month */}
+            <button
+              type="button"
+              className="secondary"
+              disabled={month === thisMonth}
+              onClick={() => setMonth(thisMonth)}
+            >
+              This month
+            </button>
           </div>
-          <ReadyToAssign
-            amount={readyToAssign.data?.month === month ? readyToAssign.data.amount : undefined}
-          />
+          <div className="header-figures">
+            <MonthIncome
+              amount={income.data?.amount}
+              stale={income.data !== undefined && income.data.month !== month}
+            />
+            <ReadyToAssign
+              month={month}
+              amount={readyToAssign.data?.amount}
+              stale={readyToAssign.data !== undefined && readyToAssign.data.month !== month}
+            />
+          </div>
         </header>
 
         {failed?.error && (
@@ -196,6 +311,14 @@ export function BudgetView({ today }: { today: Date }) {
             {error}
           </p>
         )}
+
+        {overspent > 0 && (
+          <div className="overspent-bar">
+            <a className="review-link" href={hrefFor.reviewFor(month)}>
+              {overspent} overspent · Review
+            </a>
+          </div>
+        )}
       </div>
 
       {warnings.map((w) => (
@@ -209,7 +332,13 @@ export function BudgetView({ today }: { today: Date }) {
           <NameForm
             label="Group name"
             submit="Add group"
-            onSubmit={(name) => write(() => budget.createCategoryGroup({ name }))}
+            onSubmit={(name) =>
+              write(async () => {
+                const group = await budget.createCategoryGroup({ name })
+                // the next thing anyone wants is a category in it
+                setAddingTo(group.id)
+              })
+            }
             onDone={() => setAddingGroup(false)}
           />
         ) : (
@@ -219,11 +348,48 @@ export function BudgetView({ today }: { today: Date }) {
         )}
       </div>
 
-      <div className="table-wrap" aria-busy={!figuresReady}>
+      <div
+        className={
+          settled || !haveFigures ? 'table-wrap budget-wrap' : 'table-wrap budget-wrap stale'
+        }
+        aria-busy={!settled}
+      >
         <table className="budget-table">
           <thead>
+            {wide && (
+              <tr className="peek-months">
+                <td />
+                <th scope="colgroup" colSpan={2} className="peek-month">
+                  <button type="button" className="link" onClick={() => setMonth(prevMonth)}>
+                    <span aria-hidden="true">‹ </span>
+                    {monthLabel(prevMonth).name}
+                    <span className="sr-only"> (read-only, open it to edit)</span>
+                  </button>
+                </th>
+                <th scope="colgroup" colSpan={3} className="open-month">
+                  {label.name}
+                </th>
+                <th scope="colgroup" colSpan={2} className="peek-month">
+                  <button type="button" className="link" onClick={() => setMonth(nextMonth)}>
+                    {monthLabel(nextMonth).name}
+                    <span aria-hidden="true"> ›</span>
+                    <span className="sr-only"> (read-only, open it to edit)</span>
+                  </button>
+                </th>
+              </tr>
+            )}
             <tr>
               <th scope="col">Category</th>
+              {wide && (
+                <>
+                  <th scope="col" className="num peek">
+                    Assigned
+                  </th>
+                  <th scope="col" className="num peek peek-end">
+                    Available
+                  </th>
+                </>
+              )}
               <th scope="col" className="num">
                 Assigned
               </th>
@@ -233,22 +399,52 @@ export function BudgetView({ today }: { today: Date }) {
               <th scope="col" className="num">
                 Available
               </th>
-            </tr>
-            <tr className="totals-row">
-              <td>All categories</td>
-              <td className="num">{figuresReady ? money(totals.assigned) : NONE}</td>
-              <td className="num col-activity">{figuresReady ? money(totals.activity) : NONE}</td>
-              <td className="num">{figuresReady ? money(totals.available) : NONE}</td>
+              {wide && (
+                <>
+                  <th scope="col" className="num peek peek-start">
+                    Assigned
+                  </th>
+                  <th scope="col" className="num peek">
+                    Available
+                  </th>
+                </>
+              )}
             </tr>
           </thead>
+          <tbody>
+            <tr className="totals-row">
+              <td>All categories</td>
+              {wide && <PeekCells side="prev" figures={sumPeek(shownCategories, prev)} />}
+              <td className="num">{haveFigures ? money(totals.assigned) : <Skeleton />}</td>
+              <td className="num col-activity">
+                {haveFigures ? money(totals.activity) : <Skeleton />}
+              </td>
+              <td className="num">{haveFigures ? money(totals.available) : <Skeleton />}</td>
+              {wide && <PeekCells side="next" figures={sumPeek(shownCategories, next)} />}
+            </tr>
+          </tbody>
           {shown.map((group) => {
             const isCollapsed = collapsed.has(group.id)
             const t = sum(group.categories)
             return (
-              <tbody key={group.id} className={group.hidden ? 'hidden-row' : undefined}>
+              <tbody
+                key={group.id}
+                className={[group.hidden && 'hidden-row', ...dragClass('group', group.id)]
+                  .filter(Boolean)
+                  .join(' ')}
+                {...dropTarget('group', group.id)}
+              >
                 <tr className="group-row">
                   <th scope="rowgroup">
                     <span className="name-cell">
+                      <span
+                        className="drag-handle"
+                        title={`Drag to move ${group.name}`}
+                        aria-hidden="true"
+                        {...drag.handleProps({ kind: 'group', id: group.id, scope: '' })}
+                      >
+                        ⠿
+                      </span>
                       <button
                         type="button"
                         className="icon-button"
@@ -264,24 +460,29 @@ export function BudgetView({ today }: { today: Date }) {
                         aria-haspopup="dialog"
                         onClick={() => setManaging({ kind: 'group', id: group.id })}
                       >
-                        {group.name}
+                        <span className="row-label">{group.name}</span>
                       </button>
                       <button
                         type="button"
-                        className="icon-button"
+                        className="icon-button add-category"
                         aria-label={`Add category to ${group.name}`}
+                        title={`Add category to ${group.name}`}
                         onClick={() => {
                           setAddingTo(group.id)
                           if (isCollapsed) toggle(group.id)
                         }}
                       >
-                        +
+                        <span aria-hidden="true">+</span>
                       </button>
                     </span>
                   </th>
-                  <td className="num">{figuresReady ? money(t.assigned) : NONE}</td>
-                  <td className="num col-activity">{figuresReady ? money(t.activity) : NONE}</td>
-                  <td className="num">{figuresReady ? money(t.available) : NONE}</td>
+                  {wide && <PeekCells side="prev" figures={sumPeek(group.categories, prev)} />}
+                  <td className="num">{haveFigures ? money(t.assigned) : <Skeleton />}</td>
+                  <td className="num col-activity">
+                    {haveFigures ? money(t.activity) : <Skeleton />}
+                  </td>
+                  <td className="num">{haveFigures ? money(t.available) : <Skeleton />}</td>
+                  {wide && <PeekCells side="next" figures={sumPeek(group.categories, next)} />}
                 </tr>
                 {!isCollapsed &&
                   group.categories.map((c) => {
@@ -289,19 +490,33 @@ export function BudgetView({ today }: { today: Date }) {
                     const tag = retirementTag(c.retirementStatus, c.retirementMultiplier)
                     return (
                       <Fragment key={c.id}>
-                        <tr className={c.hidden ? 'category-row hidden-row' : 'category-row'}>
+                        <tr
+                          className={[
+                            'category-row',
+                            c.hidden && 'hidden-row',
+                            ...dragClass('category', c.id),
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          {...dropTarget('category', c.id, group.id)}
+                        >
                           <th scope="row">
+                            <span
+                              className="drag-handle"
+                              title={`Drag to move ${c.name}`}
+                              aria-hidden="true"
+                              {...drag.handleProps({ kind: 'category', id: c.id, scope: group.id })}
+                            >
+                              ⠿
+                            </span>
                             <button
                               type="button"
                               className="row-open"
                               aria-haspopup="dialog"
                               onClick={() => setManaging({ kind: 'category', id: c.id })}
                             >
-                              <span className="category-name">
+                              <span className="category-name row-label">
                                 {c.name}
-                                <span className="tag need-want">
-                                  {c.needOrWant === 'need' ? 'Need' : 'Want'}
-                                </span>
                                 {tag && (
                                   <span
                                     className="tag retirement"
@@ -313,6 +528,9 @@ export function BudgetView({ today }: { today: Date }) {
                                   >
                                     {tag}
                                   </span>
+                                )}
+                                {haveFigures && b.activity !== 0 && (
+                                  <span className="row-activity">Activity {money(b.activity)}</span>
                                 )}
                                 {fund?.settings.categoryId === c.id && (
                                   <span className="fund-meter">
@@ -332,28 +550,45 @@ export function BudgetView({ today }: { today: Date }) {
                                   </span>
                                 )}
                               </span>
+                              <span className="row-chevron" aria-hidden="true">
+                                ›
+                              </span>
                             </button>
                           </th>
+                          {wide && <PeekCells side="prev" figures={categoryFigures(prev, c.id)} />}
                           <td className="num">
-                            {figuresReady ? (
+                            {haveFigures ? (
                               <AssignedInput
                                 label={`Assigned for ${c.name}`}
                                 value={b.assigned}
+                                disabled={!settled}
                                 onCommit={(delta) => assign(c, delta)}
-                                onInvalid={() =>
-                                  setError('Enter the amount as dollars, like 250.00')
-                                }
                               />
                             ) : (
-                              NONE
+                              <Skeleton />
                             )}
                           </td>
                           <td className="num col-activity">
-                            {figuresReady ? money(b.activity) : NONE}
+                            {!haveFigures ? (
+                              <Skeleton />
+                            ) : b.activity !== 0 && c.creditCardAccountId === null ? (
+                              <a
+                                className="activity-link"
+                                href={hrefFor.categoryActivity(c.id, month)}
+                                title={`Show ${c.name} transactions for ${label.name} ${label.year}`}
+                              >
+                                {money(b.activity)}
+                                <span className="sr-only">
+                                  , show {c.name} transactions for {label.name} {label.year}
+                                </span>
+                              </a>
+                            ) : (
+                              money(b.activity)
+                            )}
                           </td>
                           <td className="num">
-                            {!figuresReady ? (
-                              NONE
+                            {!haveFigures ? (
+                              <Skeleton />
                             ) : b.available < 0 && c.creditCardAccountId === null ? (
                               // the monthly review is where overspending gets covered
                               <a className="pill bad" href={hrefFor.reviewFor(month)}>
@@ -366,21 +601,26 @@ export function BudgetView({ today }: { today: Date }) {
                               </span>
                             )}
                           </td>
+                          {wide && <PeekCells side="next" figures={categoryFigures(next, c.id)} />}
                         </tr>
                         <GoalRows
                           goals={goalsOf(c.id)}
                           accounts={accountList}
                           balances={goalBalances.data?.rows ?? []}
-                          ready={goalsReady}
+                          ready={haveGoals}
+                          stale={!goalsSettled}
+                          span={span}
+                          prev={prev}
+                          next={next}
                           month={month}
                           editing={editingGoal}
                           onEdit={setEditingGoal}
                           run={run}
-                          onInvalid={() => setError('Enter the amount as dollars, like 250.00')}
+                          write={write}
                         />
                         {addingGoalTo === c.id && (
                           <tr className="add-row">
-                            <td colSpan={4}>
+                            <td colSpan={span}>
                               <GoalForm
                                 label={`New goal in ${c.name}`}
                                 accounts={accountList}
@@ -397,7 +637,7 @@ export function BudgetView({ today }: { today: Date }) {
                   })}
                 {addingTo === group.id && !isCollapsed && (
                   <tr className="add-row">
-                    <td colSpan={4}>
+                    <td colSpan={span}>
                       <NameForm
                         label={`New category in ${group.name}`}
                         submit="Add"
@@ -414,10 +654,17 @@ export function BudgetView({ today }: { today: Date }) {
           })}
         </table>
         {!groups.loading && !groups.error && shown.length === 0 && (
-          <p className="empty">
-            Your budget has no categories yet. Add a category group, then the categories you spend
-            on.
-          </p>
+          <div className="empty">
+            <p>
+              Your budget has no categories yet. Add a category group, then the categories you spend
+              on.
+            </p>
+            {!addingGroup && (
+              <button type="button" onClick={() => setAddingGroup(true)}>
+                Add category group
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -444,7 +691,7 @@ export function BudgetView({ today }: { today: Date }) {
           category={managedCategory.c}
           inGroup={managedCategory.g.categories}
           shown={shown.find((g) => g.id === managedCategory.g.id)?.categories ?? []}
-          figures={figuresReady ? balanceOf(managedCategory.c.id) : null}
+          figures={settled ? balanceOf(managedCategory.c.id) : null}
           month={month}
           monthName={`${label.name} ${label.year}`}
           onAddGoal={() => {
@@ -479,11 +726,32 @@ export function BudgetView({ today }: { today: Date }) {
 
 const tone = (available: number) => (available < 0 ? 'bad' : available === 0 ? 'zero' : 'good')
 
-function ReadyToAssign({ amount }: { amount: number | undefined }) {
+function MonthIncome({ amount, stale }: { amount: number | undefined; stale: boolean }) {
+  return (
+    <div className={stale ? 'month-income stale' : 'month-income'} aria-busy={stale}>
+      <span className="month-income-amount">
+        {amount === undefined ? <Skeleton /> : money(amount)}
+      </span>
+      <span className="month-income-title">Income this month</span>
+    </div>
+  )
+}
+
+function ReadyToAssign({
+  amount,
+  stale,
+  month,
+}: {
+  amount: number | undefined
+  stale: boolean
+  month: string
+}) {
   if (amount === undefined) {
     return (
       <div className="rta zero" role="status">
-        <span className="rta-amount">{NONE}</span>
+        <span className="rta-amount">
+          <Skeleton />
+        </span>
         <span className="rta-title">Loading</span>
       </div>
     )
@@ -495,9 +763,18 @@ function ReadyToAssign({ amount }: { amount: number | undefined }) {
         ? ['bad', 'Assigned more than you have']
         : ['zero', 'All money assigned']
   return (
-    <div className={`rta ${kind}`} role="status">
+    <div className={stale ? `rta ${kind} stale` : `rta ${kind}`} role="status" aria-busy={stale}>
       <span className="rta-amount">{money(amount)}</span>
-      <span className="rta-title">{title}</span>
+      {/* the monthly review is where leftover money is placed and over-assigned money is covered;
+          with nothing left to place there is nowhere to go */}
+      {amount === 0 ? (
+        <span className="rta-title">{title}</span>
+      ) : (
+        <a className="rta-title rta-link" href={hrefFor.reviewFor(month)}>
+          {title}
+          <span className="sr-only">, open the monthly review</span>
+        </a>
+      )}
     </div>
   )
 }

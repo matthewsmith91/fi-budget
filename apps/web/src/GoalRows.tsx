@@ -14,6 +14,8 @@ import { messageOf } from './errors.ts'
 import { goalStatus } from './goal-text.ts'
 import { money } from './format.ts'
 import { Menu } from './Menu.tsx'
+import { goalFigures, PeekCells, type Peek } from './peek.tsx'
+import { Skeleton } from './Skeleton.tsx'
 
 type Run = (fn: () => Promise<unknown>) => Promise<void>
 
@@ -125,22 +127,31 @@ export function GoalRows(props: {
   goals: Goal[]
   accounts: Account[]
   balances: GoalBalance[]
-  /** False while `balances` is for another month or hasn't arrived. */
+  /** False until some balances have arrived. */
   ready: boolean
+  /** True while `balances` is still last month's: shown dimmed, and not editable. */
+  stale: boolean
+  /** How many columns a full-width row spans. */
+  span: number
+  /** The months either side, when they are shown: read-only figures. */
+  prev: Peek | undefined
+  next: Peek | undefined
   month: string
   editing: string | null
   onEdit: (id: string | null) => void
   run: Run
-  onInvalid: () => void
+  /** Like `run`, but a failure reaches the caller, so the box that asked can show it. */
+  write: (fn: () => Promise<unknown>) => Promise<void>
 }) {
-  const { month, run, ready } = props
+  const { month, run, ready, stale } = props
+  const wide = props.span > 4
   const refresh = useRefresh()
   return props.goals.map((goal) => {
     const b = ready ? props.balances.find((x) => x.goalId === goal.id) : undefined
     if (props.editing === goal.id) {
       return (
         <tr key={goal.id} className="add-row">
-          <td colSpan={4}>
+          <td colSpan={props.span}>
             <GoalForm
               label={`Edit goal ${goal.name}`}
               goal={goal}
@@ -213,14 +224,15 @@ export function GoalRows(props: {
             </span>
           </span>
         </th>
+        {wide && <PeekCells side="prev" figures={goalFigures(props.prev, goal.id)} />}
         <td className="num">
           {ready ? (
             <AssignedInput
               label={`Assigned for goal ${goal.name}`}
               value={b?.assigned ?? 0}
-              disabled={goal.archived}
+              disabled={goal.archived || stale}
               onCommit={(delta) =>
-                void run(() =>
+                props.write(() =>
                   budget.allocate({
                     month,
                     categoryId: goal.categoryId,
@@ -230,20 +242,20 @@ export function GoalRows(props: {
                   }),
                 )
               }
-              onInvalid={props.onInvalid}
             />
           ) : (
-            '—'
+            <Skeleton />
           )}
         </td>
-        <td className="num col-activity">{ready ? money(b?.activity ?? 0) : '—'}</td>
+        <td className="num col-activity">{ready ? money(b?.activity ?? 0) : <Skeleton />}</td>
         <td className="num">
           {ready ? (
             <span className={`pill ${tone(b?.available ?? 0)}`}>{money(b?.available ?? 0)}</span>
           ) : (
-            '—'
+            <Skeleton />
           )}
         </td>
+        {wide && <PeekCells side="next" figures={goalFigures(props.next, goal.id)} />}
       </tr>
     )
   })

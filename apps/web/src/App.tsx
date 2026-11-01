@@ -56,7 +56,7 @@ function Shell() {
   if (noHousehold) {
     content = <SetupView onCreated={refresh} />
   } else if (route.view === 'budget') {
-    content = <BudgetView today={now} />
+    content = <BudgetView today={now} month={route.month} />
   } else if (route.view === 'inbox') {
     content = <InboxView accounts={accounts.data ?? []} />
   } else if (route.view === 'activity') {
@@ -83,6 +83,7 @@ function Shell() {
     content = (
       <RegisterView
         accountId={route.view === 'account' ? route.id : null}
+        filter={route.view === 'accounts' ? route.filter : undefined}
         accounts={accounts.data ?? []}
         accountsLoaded={!accounts.loading}
         onAddAccount={() => setAdding(true)}

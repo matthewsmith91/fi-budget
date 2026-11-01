@@ -1,5 +1,5 @@
 import { cents } from './money.ts'
-import type { CrudDeps } from './crud.ts'
+import { ADJUSTMENT_PAYEE, type CrudDeps } from './crud.ts'
 import type { SqlRunner } from './storage.ts'
 
 export const ALLOCATION_SOURCES = ['manual', 'rule', 'move', 'contribution'] as const
@@ -75,6 +75,12 @@ export interface AllocationsApi {
    * Negative means more is assigned than exists.
    */
   getReadyToAssign(month: Month): Promise<number>
+  /**
+   * Income dated in `month`: uncategorized inflows into on-budget accounts, not transfers or
+   * reconciliation adjustments, less any taken back by a reversal. Approved or not, like Ready
+   * to Assign.
+   */
+  getMonthIncome(month: Month): Promise<number>
 }
 
 interface AllocationRow {
@@ -247,6 +253,20 @@ export async function readyToAssign(db: SqlRunner, month: Month): Promise<number
   return (income?.total ?? 0) - (assigned?.total ?? 0) - overspent
 }
 
+export async function monthIncome(db: SqlRunner, month: Month): Promise<number> {
+  assertMonth(month)
+  const [row] = await db.query<{ total: number }>(
+    `SELECT COALESCE(SUM(s.amount), 0) AS total FROM transaction_splits s
+       JOIN transactions t ON t.id = s.transaction_id
+       JOIN accounts a ON a.id = t.account_id
+       WHERE s.category_id IS NULL AND a.on_budget = 1 AND t.transfer_pair_id IS NULL
+         AND t.payee IS NOT ? AND substr(t.date, 1, 7) = ?
+         AND (s.amount > 0 OR t.reverses_id IS NOT NULL)`,
+    [ADJUSTMENT_PAYEE, month],
+  )
+  return row?.total ?? 0
+}
+
 export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps): AllocationsApi {
   async function getAllocation(db: SqlRunner, id: string): Promise<Allocation> {
     const [row] = await db.query<AllocationRow & Record<string, never>>(
@@ -363,5 +383,6 @@ export function allocationsApi({ adapter, newId, now, changes: log }: CrudDeps):
     },
     getMonthBalances: (month) => adapter.transaction((tx) => monthBalances(tx, month)),
     getReadyToAssign: (month) => adapter.transaction((tx) => readyToAssign(tx, month)),
+    getMonthIncome: (month) => adapter.transaction((tx) => monthIncome(tx, month)),
   }
 }

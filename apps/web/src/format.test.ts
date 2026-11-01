@@ -51,5 +51,8 @@ describe('format', () => {
     expect(parseDate('2026-02-03', now)).toBe('2026-02-03')
     expect(parseDate('2/30/2026', now)).toBeNull()
     expect(parseDate('nope', now)).toBeNull()
+    expect(parseDate(' Today ', now)).toBe('2026-06-01')
+    expect(parseDate('yesterday', now)).toBe('2026-05-31')
+    expect(parseDate('yesterday', new Date(2026, 0, 1))).toBe('2025-12-31')
   })
 })

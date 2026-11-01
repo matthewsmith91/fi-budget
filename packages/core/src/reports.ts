@@ -35,8 +35,14 @@ export interface ReportsApi {
    * the average month over the trailing 3, 6 and 12. A split counts as its own tag when it
    * has one, else its category's. Only categorized spending from on-budget accounts counts,
    * including goal draw-downs and money sent to tracking accounts under a category.
+   * With `categoryId` only that category's lines count, and "history" starts at that
+   * category's first spending.
    */
-  getNeedsWantsReport(input: { month: Month; months?: number }): Promise<NeedsWantsReport>
+  getNeedsWantsReport(input: {
+    month: Month
+    months?: number
+    categoryId?: string
+  }): Promise<NeedsWantsReport>
 }
 
 export const AVERAGE_WINDOWS = [3, 6, 12] as const
@@ -96,8 +102,11 @@ export function needsWantsReport(
   return { months, averages }
 }
 
-/** Categorized spending per month through `month`, and the earliest month that had any. */
-export async function loadSpending(db: SqlRunner, month: Month) {
+/**
+ * Categorized spending per month through `month`, and the earliest month that had any.
+ * `categoryId` narrows it to one category's lines.
+ */
+export async function loadSpending(db: SqlRunner, month: Month, categoryId?: string) {
   const rows = await db.query<{ month: string; tag: string; spent: number }>(
     `SELECT substr(t.date, 1, 7) AS month,
             COALESCE(s.need_or_want_override, c.need_or_want) AS tag,
@@ -107,8 +116,9 @@ export async function loadSpending(db: SqlRunner, month: Month) {
      JOIN accounts a ON a.id = t.account_id
      JOIN categories c ON c.id = s.category_id
      WHERE a.on_budget = 1 AND substr(t.date, 1, 7) <= ?
+       AND (? IS NULL OR s.category_id = ?)
      GROUP BY month, tag`,
-    [month],
+    [month, categoryId ?? null, categoryId ?? null],
   )
   const spent = new Map<Month, { need: number; want: number }>()
   let first: Month | null = null
@@ -124,12 +134,12 @@ export async function loadSpending(db: SqlRunner, month: Month) {
 
 export function reportsApi({ adapter }: CrudDeps): ReportsApi {
   return {
-    async getNeedsWantsReport({ month, months = 12 }) {
+    async getNeedsWantsReport({ month, months = 12, categoryId }) {
       assertMonth(month)
       if (!Number.isInteger(months) || months < 1 || months > 120) {
         throw new Error('Pick between 1 and 120 months')
       }
-      const { spent, first } = await loadSpending(adapter, month)
+      const { spent, first } = await loadSpending(adapter, month, categoryId)
       return needsWantsReport(spent, month, months, first)
     },
   }
