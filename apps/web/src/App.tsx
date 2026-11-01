@@ -10,6 +10,7 @@ import { DataProvider } from './DataProvider.tsx'
 import { DEMO } from './demo-mode.ts'
 import { getBackupState } from './device-settings.ts'
 import { InboxView } from './InboxView.tsx'
+import { TabBar, TopNav } from './MainNav.tsx'
 import { QueueImporter } from './QueueImporter.tsx'
 import { ReportsView } from './ReportsView.tsx'
 import { ReviewView } from './ReviewView.tsx'
@@ -107,6 +108,8 @@ function Shell() {
           <span>{household.data?.name ?? 'Household Budget'}</span>
         </header>
 
+        <TopNav route={route} inboxCount={inbox.data?.length ?? 0} />
+
         <Sidebar
           household={household.data ?? null}
           accounts={accounts.data ?? []}
@@ -158,6 +161,8 @@ function Shell() {
           )}
           {content}
         </main>
+
+        <TabBar route={route} inboxCount={inbox.data?.length ?? 0} />
 
         <AddAccountDialog open={adding} onClose={() => setAdding(false)} />
       </div>

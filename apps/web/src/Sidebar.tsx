@@ -1,6 +1,7 @@
 import type { Account, AccountBalance, Household } from '@budget-fi/core'
 import { hrefFor, SETTINGS_GROUPS, SETTINGS_SECTIONS, type Route } from './route.ts'
 import { money } from './format.ts'
+import { DRAWER_NAV, isCurrent } from './nav-items.ts'
 
 interface Props {
   household: Household | null
@@ -126,22 +127,22 @@ function BudgetSidebar({
       </div>
 
       <nav>
-        {link(hrefFor.budget, 'Budget', route.view === 'budget')}
-        {link(
-          hrefFor.inbox,
-          'Inbox',
-          route.view === 'inbox',
-          inboxCount > 0 && (
-            <span className="nav-badge" aria-label={`${inboxCount} to review`}>
-              {inboxCount}
-            </span>
-          ),
-        )}
-        {link(hrefFor.accounts, 'All Accounts', route.view === 'accounts')}
-        {link(hrefFor.activity, 'Activity', route.view === 'activity')}
-        {link(hrefFor.reports, 'Reports', route.view === 'reports')}
-        {link(hrefFor.bills, 'Bills', route.view === 'bills')}
-        {link(hrefFor.review, 'Review', route.view === 'review')}
+        {/* a phone has no top bar, so the drawer lists the pages as well */}
+        <section className="account-section drawer-pages" aria-label="Pages">
+          <h2>Pages</h2>
+          {DRAWER_NAV.map((item) =>
+            link(
+              item.href,
+              item.label,
+              isCurrent(item, route),
+              item.id === 'inbox' && inboxCount > 0 && (
+                <span className="nav-badge" aria-label={`${inboxCount} to review`}>
+                  {inboxCount}
+                </span>
+              ),
+            ),
+          )}
+        </section>
 
         <AccountSection title="Budget" total={total(onBudget)} show={onBudget.length > 0}>
           {accountLinks(onBudget)}

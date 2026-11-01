@@ -2,6 +2,12 @@ import { expect, test, type Page } from '@playwright/test'
 import { readFile, writeFile } from 'node:fs/promises'
 
 const sidebar = (page: Page) => page.getByLabel('Budget navigation')
+const mainNav = (page: Page) => page.getByLabel('Main navigation')
+/** Opens a page from the top bar, through its dropdown when it has one. */
+async function openPage(page: Page, name: string, group?: string) {
+  if (group) await mainNav(page).getByRole('button', { name: group }).click()
+  await mainNav(page).getByRole('link', { name, exact: true }).click()
+}
 const settingsSidebar = (page: Page) => page.getByLabel('Settings navigation')
 
 async function setUpHousehold(page: Page, name = 'Smith') {
@@ -194,7 +200,7 @@ test('budget, accounts and the ledger work together and persist', async ({ page 
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
 
   // the starting balance is money to assign
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   const ready = page.getByRole('status').filter({ hasText: 'Ready to Assign' })
   await expect(ready).toContainText('$1,000.00')
 
@@ -230,7 +236,7 @@ test('budget, accounts and the ledger work together and persist', async ({ page 
   await expect(page.getByRole('alert').filter({ hasText: 'Enter the date' })).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /Rent/ })).toContainText('$350.00')
   await expect(ready).toContainText('$400.00')
 
@@ -273,7 +279,7 @@ test('a transaction can be split across categories, on desktop and on a phone', 
   await dialog.getByLabel('Current balance').fill('1000')
   await dialog.getByRole('button', { name: 'Add account' }).click()
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Home')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -316,7 +322,7 @@ test('a transaction can be split across categories, on desktop and on a phone', 
   await expect(sidebar(page).getByRole('link', { name: /Checking/ })).toContainText('$950.00')
 
   // each category is charged only its own part
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /Groceries/ })).toContainText('-$30.00')
   await expect(page.getByRole('row', { name: /Household/ })).toContainText('-$20.00')
 
@@ -353,7 +359,7 @@ test('the register is quick to type into, searchable, and careful with unsaved t
   await dialog.getByLabel('Current balance').fill('1000')
   await dialog.getByRole('button', { name: 'Add account' }).click()
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Home')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -456,7 +462,7 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await addAccount('Visa', 'credit', '')
 
   // the card got a payment category of its own
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Home')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -485,7 +491,7 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await page.getByLabel('Outflow').fill('30')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Kroger/ })).toContainText('$30.00')
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /Groceries/ })).toContainText('$70.00')
   await expect(page.getByRole('row', { name: /^Visa/ })).toContainText('$30.00')
 
@@ -502,7 +508,7 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await expect(row).toContainText('$30.00')
   await expect(sidebar(page).getByRole('link', { name: /Checking/ })).toContainText('$970.00')
   await expect(sidebar(page).getByRole('link', { name: /Visa/ })).toContainText('$0.00')
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /^Visa/ })).not.toContainText('$30.00')
 
   // editing one leg of a transfer carries the amount to the other; no payee to edit
@@ -549,7 +555,7 @@ test('credit card payments, transfers, reconciliation and the activity feed', as
   await backToBudget(page)
   await page.getByLabel('Assigned for Groceries').fill('120')
   await page.getByLabel('Assigned for Groceries').press('Enter')
-  await sidebar(page).getByRole('link', { name: 'Activity' }).click()
+  await openPage(page, 'Activity', 'Insights')
   const feed = page.getByRole('list', { name: 'Activity' })
   await expect(feed.getByRole('listitem').first()).toContainText('Matt')
   await expect(feed).toContainText('Added account “Visa”')
@@ -568,7 +574,7 @@ test('imported transactions wait in the inbox until they are categorized and app
   await dialog.getByLabel('Account type').selectOption('checking')
   await dialog.getByLabel('Current balance').fill('500')
   await dialog.getByRole('button', { name: 'Add account' }).click()
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Food')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -610,8 +616,8 @@ test('imported transactions wait in the inbox until they are categorized and app
   await safety
 
   await backToBudget(page)
-  await expect(sidebar(page).getByRole('link', { name: /Inbox/ })).toContainText('1')
-  await sidebar(page).getByRole('link', { name: /Inbox/ }).click()
+  await expect(mainNav(page).getByRole('link', { name: /Inbox/ })).toContainText('1')
+  await mainNav(page).getByRole('link', { name: /Inbox/ }).click()
   const row = page.getByRole('row', { name: /KROGER #123/ })
   await expect(row).toContainText('$42.50')
 
@@ -620,12 +626,12 @@ test('imported transactions wait in the inbox until they are categorized and app
     .getByRole('link', { name: /Checking/ })
     .click()
   await expect(page.getByRole('row', { name: /KROGER #123/ })).toContainText('Needs review')
-  await sidebar(page).getByRole('link', { name: /Inbox/ }).click()
+  await mainNav(page).getByRole('link', { name: /Inbox/ }).click()
 
   await page.getByLabel('Category for KROGER #123').selectOption({ label: 'Groceries' })
   await page.getByRole('button', { name: 'Approve KROGER #123' }).click()
   await expect(page.getByText('Nothing to review')).toBeVisible()
-  await expect(sidebar(page).getByRole('link', { name: /Inbox/ })).not.toContainText('1')
+  await expect(mainNav(page).getByRole('link', { name: /Inbox/ })).not.toContainText('1')
 
   await sidebar(page)
     .getByRole('link', { name: /Checking/ })
@@ -673,7 +679,7 @@ test('YNAB history comes in from its export, and payee rules can use the new cat
 
   // the history is in the ledger: balances, the category and its assignment
   await backToBudget(page)
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /Groceries/ })).toBeVisible()
   await sidebar(page)
     .getByRole('link', { name: /Checking/ })
@@ -793,7 +799,7 @@ test('goals: create, fund, spend from, and archive', async ({ page }) => {
   await dialog.getByRole('button', { name: 'Add account' }).click()
   await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Savings')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -832,7 +838,7 @@ test('goals: create, fund, spend from, and archive', async ({ page }) => {
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Apple/ })).toContainText('Household: Laptop')
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(goal).toContainText('16% of $1,200.00')
   await expect(goal).toContainText('$200.00')
   await expect(page.getByRole('row', { name: /^Household/ })).toContainText('$200.00')
@@ -870,7 +876,7 @@ test('goals held in an account warn when they add up to more than the account ha
     await expect(page.getByRole('heading', { name: name! })).toBeVisible()
   }
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Savings')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -921,7 +927,7 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   await dialog.getByRole('button', { name: 'Add account' }).click()
   await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Everyday')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -962,7 +968,7 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   await page.getByRole('button', { name: 'Cancel' }).click()
 
   // the report opens on the last complete month; this month's spending is one step on
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   await expect(page.getByRole('heading', { name: 'Reports' })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Average month' })).toContainText('3 months')
   await page.getByRole('button', { name: 'Next month' }).click()
@@ -983,13 +989,13 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   await fund.getByRole('button', { name: 'Create emergency fund' }).click()
   await expect(fund).toContainText('Months covered')
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Reserves', exact: true })).toBeVisible()
   await page.getByLabel('Assigned for Emergency Fund').fill('160')
   await page.getByLabel('Assigned for Emergency Fund').press('Enter')
   await expect(page.getByRole('row', { name: /^Emergency Fund/ })).toContainText('$160.00')
 
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   await page.getByRole('button', { name: 'Next month' }).click()
   await expect(fund).toContainText('$160.00')
   await expect(fund).toContainText('$480.00')
@@ -1002,7 +1008,7 @@ test('needs vs wants: category tags, split overrides, and the report', async ({ 
   await expect(fund).toContainText('goes back to Ready to Assign')
   await fund.getByRole('button', { name: 'Delete emergency fund', exact: true }).click()
   await expect(fund).toContainText('An emergency fund is optional')
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByLabel('Assigned for Emergency Fund')).toHaveCount(0)
 })
 
@@ -1028,7 +1034,7 @@ test('an emergency expense is paid for from the emergency fund, and the report l
   await expect(page.getByLabel('Pay from the emergency fund')).toHaveCount(0)
   await page.getByRole('button', { name: 'Cancel' }).click()
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Everyday')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -1036,11 +1042,11 @@ test('an emergency expense is paid for from the emergency fund, and the report l
   await page.getByLabel('New category in Everyday').fill('Car repair')
   await page.getByRole('button', { name: 'Add', exact: true }).click()
 
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   await page.getByRole('button', { name: 'Create emergency fund' }).click()
   await expect(page.getByRole('region', { name: 'Emergency fund' })).toContainText('Months covered')
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByLabel('Assigned for Emergency Fund').fill('1000')
   await page.getByLabel('Assigned for Emergency Fund').press('Enter')
   await expect(page.getByRole('row', { name: /^Emergency Fund/ })).toContainText('$1,000.00')
@@ -1057,13 +1063,13 @@ test('an emergency expense is paid for from the emergency fund, and the report l
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Garage/ })).toContainText('Emergency')
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /^Emergency Fund/ })).toContainText('$600.00')
   const carRepair = page.getByRole('row', { name: /^Car repair/ })
   await expect(carRepair).toContainText('-$400.00')
   await expect(carRepair).toContainText('$0.00')
 
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   const emergencies = page.getByRole('region', { name: 'Emergencies' })
   await expect(emergencies).toContainText('$400.00 came out of the fund for one emergency')
   await expect(emergencies.getByRole('row', { name: /Garage/ })).toContainText('Car repair')
@@ -1076,7 +1082,7 @@ test('an emergency expense is paid for from the emergency fund, and the report l
   await page.getByRole('row', { name: /Garage/ }).click()
   await page.getByLabel('Pay from the emergency fund').uncheck()
   await page.getByRole('button', { name: 'Save' }).click()
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /^Emergency Fund/ })).toContainText('$1,000.00')
   await expect(page.getByRole('row', { name: /^Car repair/ })).toContainText('-$400.00')
 })
@@ -1093,7 +1099,7 @@ test('income rules: a paycheck feeds the tithe, and taking it back reverses that
   await dialog.getByRole('button', { name: 'Add account' }).click()
   await expect(page.getByRole('heading', { name: 'Checking' })).toBeVisible()
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Giving')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -1123,7 +1129,7 @@ test('income rules: a paycheck feeds the tithe, and taking it back reverses that
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Acme Payroll/ })).toContainText('$2,411.37')
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   const ready = page.getByRole('status').filter({ hasText: 'Ready to Assign' })
   await expect(page.getByRole('row', { name: /^Tithe/ })).toContainText('$310.00')
   await expect(ready).toContainText('$2,101.37')
@@ -1146,7 +1152,7 @@ test('income rules: a paycheck feeds the tithe, and taking it back reverses that
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /reversal/ })).toContainText('$2,411.37')
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await expect(page.getByRole('row', { name: /^Tithe/ })).toContainText('$0.00')
   await expect(page.getByRole('status').filter({ hasText: 'All money assigned' })).toBeVisible()
 
@@ -1183,7 +1189,7 @@ test('investment goals own units of an account, and Roth contributions count aga
   await dialog.getByRole('button', { name: 'Add account' }).click()
   await expect(page.getByRole('heading', { name: 'Jessica Roth' })).toBeVisible()
 
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Savings')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -1252,7 +1258,7 @@ test('investment goals own units of an account, and Roth contributions count aga
   await dialog.getByLabel('Amount').fill('1000')
   await dialog.getByRole('button', { name: 'Add transfer' }).click()
   await expect(page.getByRole('row', { name: /Transfer: Jessica Roth/ })).toBeVisible()
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   const roth = page.getByRole('region', { name: 'Roth IRA contributions' })
   await expect(roth).toContainText('Jessica')
   await expect(roth).toContainText('$1,000.00 of $7,500.00')
@@ -1286,7 +1292,7 @@ test('reports show net worth, a retirement projection and each category’s reti
   await expect(dialog).toContainText('$50,000.00')
   await dialog.getByRole('button', { name: 'Done' }).click()
 
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   const netWorth = page.getByRole('region', { name: 'Net worth' })
   await expect(netWorth).toContainText('$51,000.00')
   await expect(netWorth.getByRole('img', { name: /Net worth by month/ })).toBeVisible()
@@ -1303,7 +1309,7 @@ test('reports show net worth, a retirement projection and each category’s reti
     'Monthly contribution': '1000',
   })
   await backToBudget(page)
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   await retirement.getByLabel('Yearly return').fill('3')
   await retirement.getByLabel('Yearly inflation').fill('3')
   await retirement.getByRole('button', { name: 'Save' }).click()
@@ -1323,7 +1329,7 @@ test('reports show net worth, a retirement projection and each category’s reti
   await expect(retirement.getByRole('alert')).toContainText('return')
 
   // a category's status in retirement is set from its menu and survives a reload
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Bills')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -1368,7 +1374,7 @@ test('bills feed a cash-flow forecast, and the monthly review fixes an overspent
   await dialog.getByRole('button', { name: 'Add account' }).click()
 
   // a bill that fits is fine; one that does not is called out with the day it happens
-  await sidebar(page).getByRole('link', { name: 'Bills', exact: true }).click()
+  await openPage(page, 'Bills', 'Plan')
   const forecast = page.getByRole('region', { name: 'Cash-flow forecast' })
   await expect(forecast).toContainText('Cash stays above zero')
   const items = page.getByRole('region', { name: 'Recurring bills and income' })
@@ -1401,7 +1407,7 @@ test('bills feed a cash-flow forecast, and the monthly review fixes an overspent
   await expect(items.getByRole('row', { name: /Landlord/ })).toHaveCount(0)
 
   // an overspent category shows up in the review with a move that covers it
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Everyday')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -1420,7 +1426,7 @@ test('bills feed a cash-flow forecast, and the monthly review fixes an overspent
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Market/ })).toContainText('$150.00')
 
-  await sidebar(page).getByRole('link', { name: 'Review', exact: true }).click()
+  await openPage(page, 'Monthly review', 'Plan')
   const went = page.getByRole('region', { name: 'Went over' })
   await expect(went).toContainText('Groceries')
   await expect(went).toContainText('$50.00 over')
@@ -1484,7 +1490,7 @@ test('profiles: add people, link a spouse, and plan retirement together', async 
 
   // the retirement card plans for both
   await backToBudget(page)
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   const retirement = page.getByRole('region', { name: 'Retirement projection' })
   const people = retirement.getByRole('table', { name: 'People in the plan' })
   await expect(people.getByRole('row', { name: /Matt/ })).toContainText('65')
@@ -1519,7 +1525,7 @@ test('reports estimate retirement spending, check it against the portfolio and p
   await addAccount('College 529', 'investment', '', '529 plan')
 
   // a category with spending that continues
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Everyday')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -1536,7 +1542,7 @@ test('reports estimate retirement spending, check it against the portfolio and p
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('row', { name: /Landlord/ })).toContainText('$2,000.00')
 
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   // the report opens on the last complete month; step forward to the one with the spending
   await page.getByRole('button', { name: 'Next month' }).click()
   const spend = page.getByRole('region', { name: 'Retirement spending' })
@@ -1571,7 +1577,7 @@ test('reports estimate retirement spending, check it against the portfolio and p
   await expect(spend).toContainText('birth month')
   await setProfile(page, 'Matt', { 'Birth month': '1996-01' })
   await backToBudget(page)
-  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await openPage(page, 'Reports', 'Insights')
   await page.getByRole('button', { name: 'Next month' }).click()
   await expect(spend.getByRole('status').filter({ hasText: 'Short by' })).toBeVisible()
   // the spending assumptions are still what was saved
@@ -1619,7 +1625,7 @@ test('the budget shows last month and next month read-only; opening one makes it
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Current balance').fill('1000')
   await dialog.getByRole('button', { name: 'Add account' }).click()
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
   await page.getByRole('button', { name: '+ Category Group' }).click()
   await page.getByLabel('Group name').fill('Bills')
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -1661,7 +1667,7 @@ test('categories and groups are reordered by dragging their handle, and the orde
 }) => {
   await page.goto('/')
   await setUpHousehold(page)
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
 
   for (const group of ['Home', 'Fun']) {
     await page.getByRole('button', { name: '+ Category Group' }).click()
@@ -1723,7 +1729,7 @@ test('the budget remembers its month and folded groups, and points Ready to Assi
   await dialog.getByLabel('Account name').fill('Checking')
   await dialog.getByLabel('Current balance').fill('500')
   await dialog.getByRole('button', { name: 'Add account' }).click()
-  await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
+  await mainNav(page).getByRole('link', { name: 'Budget', exact: true }).click()
 
   // a new group opens its add-category form straight away
   await page.getByRole('button', { name: '+ Category Group' }).click()
@@ -1752,7 +1758,7 @@ test('the budget remembers its month and folded groups, and points Ready to Assi
   await expect(page).toHaveURL(/#\/budget\/\d{4}-\d{2}$/)
   await expect(heading).not.toHaveText(before)
   const later = await heading.innerText()
-  await sidebar(page).getByRole('link', { name: 'All Accounts' }).click()
+  await openPage(page, 'All Accounts')
   await page.goBack()
   await expect(heading).toHaveText(later)
   await page.getByRole('button', { name: 'This month' }).click()

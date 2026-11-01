@@ -31,6 +31,8 @@
   --side-active: #3a64a8;
   --side-line: #333d5e;
   --sidebar-w: 16rem;
+  /* the bar across the top of the page (a phone's top bar overrides it) */
+  --topbar-h: 2.75rem;
   color-scheme: light dark;
   font:
     15px/1.45 system-ui,
@@ -219,9 +221,26 @@ form.inline input {
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   min-height: 100vh;
   min-height: 100dvh;
+  grid-template-rows: auto 1fr;
 }
 
-.topbar {
+.sidebar {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.topnav {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+main {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.topbar,
+.tabbar {
   display: none;
 }
 
@@ -412,6 +431,112 @@ main {
 
 .scrim {
   display: none;
+}
+
+/* only the phone drawer lists the pages; a wide screen has the top bar */
+.drawer-pages {
+  display: none;
+}
+
+/* ---------- main navigation ---------- */
+
+/* a wide screen: links and dropdowns across the top of the page */
+.topnav {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  box-sizing: border-box;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  padding: 0 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.topnav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 0;
+  padding: 0 0.8rem;
+  background: transparent;
+  color: var(--fg);
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.topnav-link:hover {
+  background: var(--row-hover);
+}
+
+.topnav-link.active {
+  border-bottom-color: var(--accent);
+  font-weight: 650;
+}
+
+.topnav-caret {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.topnav-group {
+  position: relative;
+  display: flex;
+}
+
+.topnav-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 11rem;
+  margin: 0;
+  padding: 0.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+.topnav-list a {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  color: var(--fg);
+  border-radius: 0.35rem;
+  text-decoration: none;
+}
+
+.topnav-list a:hover {
+  background: var(--row-hover);
+}
+
+.topnav-list a.active {
+  font-weight: 650;
+  color: var(--accent);
+}
+
+.more-list a {
+  display: block;
+  padding: 0.85rem 0.25rem;
+  color: var(--fg);
+  border-bottom: 1px solid var(--line);
+  text-decoration: none;
+}
+
+.more-list a.active {
+  font-weight: 650;
+  color: var(--accent);
+}
+
+.topnav .nav-badge {
+  margin-left: 0.1rem;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 /* ---------- pages ---------- */
@@ -1112,7 +1237,24 @@ tr:focus-within .row-actions {
     align-content: start;
   }
 
+  .topnav {
+    display: none;
+  }
+
+  .drawer-pages {
+    display: block;
+    margin-top: 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--side-line);
+  }
+
+  .topbar,
+  main {
+    grid-column: 1;
+  }
+
   .topbar {
+    grid-row: 1;
     display: flex;
     align-items: center;
     gap: 0.6rem;
@@ -1148,7 +1290,50 @@ tr:focus-within .row-actions {
   }
 
   main {
-    padding: 0 max(0.75rem, env(safe-area-inset-right)) 2rem max(0.75rem, env(safe-area-inset-left));
+    grid-row: 2;
+    /* clear the tab bar along the bottom */
+    padding: 0 max(0.75rem, env(safe-area-inset-right)) calc(4.5rem + env(safe-area-inset-bottom))
+      max(0.75rem, env(safe-area-inset-left));
+  }
+
+  /* a phone: the main pages along the bottom, within thumb's reach */
+  .tabbar {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    position: fixed;
+    z-index: 30;
+    inset: auto 0 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--side-bg);
+    color: var(--side-fg);
+    border-top: 1px solid var(--side-line);
+  }
+
+  .tab {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3.25rem;
+    padding: 0 0.25rem;
+    background: transparent;
+    color: var(--side-muted);
+    border: 0;
+    border-radius: 0;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .tab.active {
+    color: #ffffff;
+    box-shadow: inset 0 3px 0 var(--side-active);
+  }
+
+  .tab .nav-badge {
+    position: absolute;
+    top: 0.35rem;
+    left: calc(50% + 1.1rem);
   }
 
   .page-header {
@@ -1783,7 +1968,7 @@ fieldset.choices {
 /* Ready to Assign and any error stay in view while the categories scroll under them. */
 .budget-sticky {
   position: sticky;
-  top: 0;
+  top: var(--topbar-h, 0px);
   z-index: 20;
   background: var(--bg);
 }
