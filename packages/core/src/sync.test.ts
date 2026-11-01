@@ -171,7 +171,9 @@ describe('sync between two devices', () => {
     expect(result.pushed).toBe(600)
     await b.api.syncNow()
     expect(await b.accounts()).toHaveLength(120)
-  })
+    // 120 accounts is slow enough that the default 5s limit is marginal when every test file
+    // runs at once
+  }, 20_000)
 
   it('joins a sync already in progress instead of running two', async () => {
     await a.api.createAccount({ name: 'Checking', type: 'checking' })

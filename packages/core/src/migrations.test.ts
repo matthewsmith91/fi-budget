@@ -90,6 +90,48 @@ describe('migrations', () => {
     ])
   })
 
+  it('moves the household’s one-person retirement settings onto the first member', async () => {
+    const db = await openMemoryAdapter({ migrated: false })
+    await migrate(db, { migrations: MIGRATIONS.slice(0, 20) })
+    await db.exec(`INSERT INTO households (id, name, created_at) VALUES ('h', 'Smith', 't')`)
+    for (const [id, name, at] of [
+      ['m2', 'Jessica', '2026-01-02'],
+      ['m1', 'Matt', '2026-01-01'],
+    ] as const) {
+      await db.exec(
+        `INSERT INTO members (id, household_id, display_name, created_at) VALUES (?, 'h', ?, ?)`,
+        [id, name, at],
+      )
+    }
+    await db.exec(
+      `INSERT INTO retirement_assumptions
+         (id, birth_month, target_age, monthly_contribution, return_rate, inflation_rate, created_at)
+       VALUES ('retirement', '1988-04', 62, 150000, 7, 3, 't')`,
+    )
+    await migrate(db)
+    expect(
+      await db.query(
+        'SELECT id, birth_month, retirement_age, monthly_contribution FROM members ORDER BY id',
+      ),
+    ).toEqual([
+      { id: 'm1', birth_month: '1988-04', retirement_age: 62, monthly_contribution: 150000 },
+      { id: 'm2', birth_month: null, retirement_age: 65, monthly_contribution: 0 },
+    ])
+  })
+
+  it('leaves members at the defaults when no retirement settings were saved', async () => {
+    const db = await openMemoryAdapter({ migrated: false })
+    await migrate(db, { migrations: MIGRATIONS.slice(0, 20) })
+    await db.exec(`INSERT INTO households (id, name, created_at) VALUES ('h', 'Smith', 't')`)
+    await db.exec(
+      `INSERT INTO members (id, household_id, display_name, created_at) VALUES ('m', 'h', 'Matt', 't')`,
+    )
+    await migrate(db)
+    expect(await db.query('SELECT birth_month, retirement_age FROM members')).toEqual([
+      { birth_month: null, retirement_age: 65 },
+    ])
+  })
+
   it('indexes the transfer pair lookup that listing transactions does per row', async () => {
     const db = await openMemoryAdapter()
     const plan = await db.query<{ detail: string }>(

@@ -12,6 +12,7 @@ async function setUpHousehold(page: Page, name = 'Smith') {
 
 const SETTINGS_SECTIONS = [
   'Household',
+  'Profiles',
   'Connections',
   'Payee rules',
   'Income rules',
@@ -35,6 +36,18 @@ async function openSettings(page: Page, section?: (typeof SETTINGS_SECTIONS)[num
 async function chooseCategory(page: Page, label: string, name: string) {
   await page.locator(`input.combobox[aria-label="${label}"]`).fill(name)
   await page.locator('.combo-list [role="option"]', { hasText: name }).first().click()
+}
+
+/** Fills in a person's profile on Settings > Profiles and saves it; ends on that page. */
+async function setProfile(page: Page, person: string, fields: Record<string, string>) {
+  const heading = page.getByRole('heading', { name: 'Profiles', exact: true })
+  if (!(await heading.isVisible())) await openSettings(page, 'Profiles')
+  const card = page.getByRole('region', { name: `Profile: ${person}` })
+  for (const [label, value] of Object.entries(fields)) {
+    await card.getByLabel(label, { exact: true }).fill(value)
+  }
+  await card.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(card.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible()
 }
 
 async function backToBudget(page: Page) {
@@ -1281,11 +1294,16 @@ test('reports show net worth, a retirement projection and each category’s reti
 
   // no birth month, no projection
   const retirement = page.getByRole('region', { name: 'Retirement projection' })
-  await expect(retirement).toContainText('Enter a birth month')
+  await expect(retirement).toContainText('Add a birth month')
   await expect(retirement).toContainText('Work 401k ($50,000.00)')
-  await retirement.getByLabel('Birth month').fill('1996-01')
-  await retirement.getByLabel('Target age').fill('40')
-  await retirement.getByLabel('Monthly contribution').fill('1000')
+  // the person's facts are on their profile; the card keeps the household's market assumptions
+  await setProfile(page, 'Matt', {
+    'Birth month': '1996-01',
+    'Retirement age': '40',
+    'Monthly contribution': '1000',
+  })
+  await backToBudget(page)
+  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
   await retirement.getByLabel('Yearly return').fill('3')
   await retirement.getByLabel('Yearly inflation').fill('3')
   await retirement.getByRole('button', { name: 'Save' }).click()
@@ -1293,13 +1311,16 @@ test('reports show net worth, a retirement projection and each category’s reti
   await expect(
     retirement.getByRole('img', { name: /Projected retirement portfolio/ }),
   ).toBeVisible()
-  await expect(retirement.locator('.hero-figure')).toContainText('$')
+  // $50,000 now plus 110 months of $1,000, with the saved rates (the chart was already there
+  // from the profile, so this waits for the new rates to land)
+  await expect(retirement.locator('.hero-figure')).toContainText('$160,000.00')
   await expect(retirement).toContainText('Still to contribute')
+  await expect(retirement.getByRole('row', { name: /Matt/ })).toContainText('$1,000.00')
 
   // a bad value is refused inline and keeps what was saved
-  await retirement.getByLabel('Target age').fill('20')
+  await retirement.getByLabel('Yearly return').fill('80')
   await retirement.getByRole('button', { name: 'Save' }).click()
-  await expect(retirement.getByRole('alert')).toContainText('target age')
+  await expect(retirement.getByRole('alert')).toContainText('return')
 
   // a category's status in retirement is set from its menu and survives a reload
   await sidebar(page).getByRole('link', { name: 'Budget', exact: true }).click()
@@ -1410,6 +1431,75 @@ test('bills feed a cash-flow forecast, and the monthly review fixes an overspent
   await expect(page.getByText('Nothing needs fixing.')).toBeVisible()
 })
 
+test('profiles: add people, link a spouse, and plan retirement together', async ({ page }) => {
+  await page.goto('/')
+  await setUpHousehold(page)
+  await openSettings(page, 'Profiles')
+  const matt = page.getByRole('region', { name: 'Profile: Matt' })
+  const jessica = page.getByRole('region', { name: 'Profile: Jessica' })
+  await expect(matt).toBeVisible()
+  await expect(jessica).toBeVisible()
+
+  await setProfile(page, 'Matt', {
+    'Birth month': '1988-04',
+    'Retirement age': '65',
+    'Yearly income': '125000',
+    'Monthly contribution': '1100',
+  })
+  await expect(matt).toContainText('is 11% of income')
+  // a bad value is refused inline and nothing is saved
+  await matt.getByLabel('Retirement age', { exact: true }).fill('20')
+  await matt.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(matt.getByRole('alert')).toContainText('retirement age')
+
+  await setProfile(page, 'Jessica', {
+    'Birth month': '1990-09',
+    'Retirement age': '62',
+    'Monthly contribution': '800',
+    'Social Security a month': '2100',
+  })
+  // nobody has linked her yet, so the plan leaves her out and says how to fix it
+  await expect(jessica).toContainText('Not linked as a spouse or partner')
+
+  await jessica.getByLabel('Link Jessica to').selectOption({ label: 'Matt' })
+  await jessica.getByLabel('Relationship').selectOption({ label: 'Spouse' })
+  await jessica.getByRole('button', { name: 'Link', exact: true }).click()
+  await expect(jessica).toContainText('Spouse: Matt')
+  await expect(jessica).toContainText('Counted in the retirement plan')
+  await expect(matt).toContainText('Spouse: Jessica')
+
+  // a person can be added, but not twice, and removed again
+  await page.getByLabel('New person’s name').fill('Sam')
+  await page.getByRole('button', { name: 'Add person' }).click()
+  const sam = page.getByRole('region', { name: 'Profile: Sam' })
+  await expect(sam).toContainText('Needs a birth month')
+  await page.getByLabel('New person’s name').fill('sam')
+  await page.getByRole('button', { name: 'Add person' }).click()
+  await expect(page.getByRole('region', { name: 'Add a person' }).getByRole('alert')).toContainText(
+    'already someone',
+  )
+  await sam.getByRole('button', { name: 'Remove Sam' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Remove' }).click()
+  await expect(sam).toHaveCount(0)
+
+  // the retirement card plans for both
+  await backToBudget(page)
+  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  const retirement = page.getByRole('region', { name: 'Retirement projection' })
+  const people = retirement.getByRole('table', { name: 'People in the plan' })
+  await expect(people.getByRole('row', { name: /Matt/ })).toContainText('65')
+  await expect(people.getByRole('row', { name: /Jessica/ })).toContainText('62')
+  await expect(people.getByRole('row', { name: /Jessica/ })).toContainText('$800.00')
+
+  // it all survives a reload
+  await page.reload()
+  await expect(
+    page
+      .getByRole('region', { name: 'Retirement projection' })
+      .getByRole('row', { name: /Jessica/ }),
+  ).toBeVisible()
+})
+
 test('reports estimate retirement spending, check it against the portfolio and plan a 529', async ({
   page,
 }) => {
@@ -1478,12 +1568,13 @@ test('reports estimate retirement spending, check it against the portfolio and p
   await expect(spend.locator('.hero-figure')).toContainText('$480,000.00')
 
   // with no portfolio the check says why; a birth month brings the comparison
-  await expect(spend).toContainText('Enter a birth month')
-  const retirement = page.getByRole('region', { name: 'Retirement projection' })
-  await retirement.getByLabel('Birth month').fill('1996-01')
-  await retirement.getByRole('button', { name: 'Save' }).click()
+  await expect(spend).toContainText('birth month')
+  await setProfile(page, 'Matt', { 'Birth month': '1996-01' })
+  await backToBudget(page)
+  await sidebar(page).getByRole('link', { name: 'Reports' }).click()
+  await page.getByRole('button', { name: 'Next month' }).click()
   await expect(spend.getByRole('status').filter({ hasText: 'Short by' })).toBeVisible()
-  // saving the projection's form kept the spending assumptions
+  // the spending assumptions are still what was saved
   await expect(spend.getByLabel('Withdrawal rate')).toHaveValue('5')
 
   // a 529 plan

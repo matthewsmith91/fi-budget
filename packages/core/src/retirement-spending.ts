@@ -5,6 +5,7 @@ import {
   loadRetirementProjection,
   readRetirementSettings,
   shiftMonth,
+  TARGET_AGE_RANGE,
   type RetirementSettings,
 } from './retirement.ts'
 import type { SqlRunner } from './storage.ts'
@@ -55,8 +56,27 @@ export interface RetirementSpendStep {
   annual: number
 }
 
+/** Social Security or a pension one person in the plan expects. */
+export interface RetirementBenefit {
+  memberId: string
+  name: string
+  kind: 'social-security' | 'pension'
+  /** Integer cents a month, in today's dollars. */
+  monthly: number
+  /** The age they claim it, their own. */
+  claimAge: number
+  /** The first whole age of the reference person at which it is being paid. */
+  fromAge: number
+  /** Whether it is being paid when the last person retires, so it is counted in the check. */
+  active: boolean
+}
+
 export interface RetirementSpending {
   settings: RetirementSettings
+  /** The age everything here is measured at: when the last person in the plan retires. */
+  targetAge: number
+  /** Whose age that is; null with no one in the plan. */
+  referenceName: string | null
   /** The last month the spending average runs through. */
   month: Month
   /** How many months the baseline averages; less than the lookback with a short history. */
@@ -70,11 +90,24 @@ export interface RetirementSpending {
   fixedItems: RetirementFixedItemFigures[]
   /** Fixed additions that apply at the target age, per year. */
   fixedAnnual: number
+  /** Social Security and pensions of the people in the plan. */
+  benefits: RetirementBenefit[]
+  /** What the benefits being paid at the target age add up to a year. */
+  benefitsAnnual: number
   /** Baseline × 12 + fixed additions at the target age, in today's dollars. */
   annualSpend: number
-  /** The spend from the target age on, as fixed additions start and stop. */
+  /** What the portfolio must cover a year: the spend less the benefits, never below zero. */
+  portfolioAnnual: number
+  /** What the people in the plan earn a year today; 0 when no income is entered. */
+  householdIncome: number
+  /** Whole percent of that income the annual spend is; null with no income entered. */
+  incomeReplacement: number | null
+  /**
+   * What the portfolio must cover from the target age on, as fixed additions and benefits
+   * start and stop.
+   */
   schedule: RetirementSpendStep[]
-  /** Annual spend ÷ withdrawal rate; null with no spending history. */
+  /** What the portfolio must cover ÷ withdrawal rate; null with no spending history. */
   requiredPortfolio: number | null
   /** The projected portfolio at the target age; null until there is a projection. */
   projected: number | null
@@ -134,7 +167,10 @@ export const itemActiveAt = (
 ): boolean =>
   (item.startAge === null || item.startAge <= age) && (item.endAge === null || age < item.endAge)
 
-/** Pure: the yearly spend from `fromAge`, one step wherever a fixed item starts or stops. */
+/**
+ * Pure: the yearly spend from `fromAge`, one step wherever an item starts or stops. An item may
+ * be negative (a benefit that pays for part of it); the spend never goes below zero.
+ */
 export function spendSchedule(
   baselineAnnual: number,
   items: readonly Pick<RetirementFixedItem, 'annualAmount' | 'startAge' | 'endAge'>[],
@@ -148,9 +184,11 @@ export function spendSchedule(
   const starts = [fromAge, ...[...breaks].sort((a, b) => a - b)]
   const steps: RetirementSpendStep[] = []
   for (const age of starts) {
-    const annual =
+    const annual = Math.max(
       baselineAnnual +
-      items.reduce((n, item) => n + (itemActiveAt(item, age) ? item.annualAmount : 0), 0)
+        items.reduce((n, item) => n + (itemActiveAt(item, age) ? item.annualAmount : 0), 0),
+      0,
+    )
     const last = steps[steps.length - 1]
     if (last && last.annual === annual) continue
     if (last) last.toAge = age
@@ -263,6 +301,8 @@ export function retirementSpendingApi({
       return adapter.transaction(async (tx) => {
         const settings = await readRetirementSettings(tx)
         const rate = settings.withdrawalRate
+        const projection = await loadRetirementProjection(tx, asOf)
+        const targetAge = projection.targetAge ?? TARGET_AGE_RANGE.default
 
         // Net spending per category over the lookback, from on-budget accounts. The window
         // starts no earlier than the first month with any spending, so a new budget isn't
@@ -328,16 +368,49 @@ export function retirementSpendingApi({
         const items = (
           await tx.query<ItemRow & Record<string, never>>(`${ITEM_SELECT} ORDER BY created_at, id`)
         ).map(toItem)
-        const fixedItems = items.map((i) => ({ ...i, active: itemActiveAt(i, settings.targetAge) }))
+        const fixedItems = items.map((i) => ({ ...i, active: itemActiveAt(i, targetAge) }))
         const fixedAnnual = fixedItems.reduce((n, i) => n + (i.active ? i.annualAmount : 0), 0)
         const annualSpend = baselineMonthly * 12 + fixedAnnual
 
-        const projection = await loadRetirementProjection(tx, asOf)
-        const requiredPortfolio = annualSpend > 0 ? Math.round((annualSpend * 100) / rate) : null
+        // Benefits are claimed at each person's own age; the schedule runs on the reference
+        // person's, so each is placed at the first whole age of theirs at which it is paying.
+        const reference = projection.people.find(
+          (p) => p.memberId === projection.reference?.memberId,
+        )
+        const benefits: RetirementBenefit[] = projection.people.flatMap((p) =>
+          (
+            [
+              ['social-security', p.socialSecurityMonthly, p.socialSecurityAge],
+              ['pension', p.pensionMonthly, p.pensionAge],
+            ] as const
+          )
+            .filter(([, monthly]) => monthly > 0)
+            .map(([kind, monthly, claimAge]) => {
+              const fromAge = Math.ceil(
+                ((reference?.ageMonths ?? 0) + claimAge * 12 - p.ageMonths) / 12,
+              )
+              return {
+                memberId: p.memberId,
+                name: p.name,
+                kind,
+                monthly,
+                claimAge,
+                fromAge,
+                active: fromAge <= targetAge,
+              }
+            }),
+        )
+        const benefitsAnnual = benefits.reduce((n, b) => n + (b.active ? b.monthly * 12 : 0), 0)
+        const portfolioAnnual = Math.max(annualSpend - benefitsAnnual, 0)
+        const requiredPortfolio =
+          annualSpend > 0 ? Math.round((portfolioAnnual * 100) / rate) : null
         const projected = projection.projected
         const comparable = requiredPortfolio !== null && projected !== null
+        const householdIncome = projection.householdIncome
         return {
           settings,
+          targetAge,
+          referenceName: projection.reference?.name ?? null,
           month,
           averagedMonths,
           categories,
@@ -345,13 +418,37 @@ export function retirementSpendingApi({
           endingMonthly,
           fixedItems,
           fixedAnnual,
+          benefits,
+          benefitsAnnual,
           annualSpend,
-          schedule: spendSchedule(baselineMonthly * 12, items, settings.targetAge),
+          portfolioAnnual,
+          householdIncome,
+          incomeReplacement:
+            householdIncome > 0 && annualSpend > 0
+              ? Math.round((annualSpend * 100) / householdIncome)
+              : null,
+          schedule: spendSchedule(
+            baselineMonthly * 12,
+            [
+              ...items,
+              ...benefits.map((b) => ({
+                annualAmount: -b.monthly * 12,
+                startAge: b.fromAge,
+                endAge: null,
+              })),
+            ],
+            targetAge,
+          ),
           requiredPortfolio,
           projected,
           projectionProblem: projection.problem,
           surplus: comparable ? projected - requiredPortfolio : null,
-          fundedPercent: comparable ? Math.floor((projected * 100) / requiredPortfolio) : null,
+          // benefits that cover all the spending leave nothing to fund
+          fundedPercent: comparable
+            ? requiredPortfolio === 0
+              ? 100
+              : Math.floor((projected * 100) / requiredPortfolio)
+            : null,
           succeeds: comparable ? projected >= requiredPortfolio : null,
           perHundredMonthly: Math.round((100_00 * 12 * 100) / rate),
         }

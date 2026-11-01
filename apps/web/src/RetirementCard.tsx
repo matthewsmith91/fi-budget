@@ -1,10 +1,11 @@
-import { INFLATION_RATE_RANGE, RETURN_RATE_RANGE, TARGET_AGE_RANGE } from '@budget-fi/core'
+import { INFLATION_RATE_RANGE, RETURN_RATE_RANGE } from '@budget-fi/core'
 import { LineChart } from '@budget-fi/ui'
 import { useEffect, useState, type FormEvent } from 'react'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
 import { money, moneyShort, monthOf, todayIso } from './format.ts'
+import { hrefFor } from './route.ts'
 import {
   ageLabel,
   monthYear,
@@ -28,13 +29,7 @@ export function RetirementCard({ today }: { today: Date }) {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     if (saved) setForm(retirementFormOf(saved))
-  }, [
-    saved?.birthMonth,
-    saved?.targetAge,
-    saved?.monthlyContribution,
-    saved?.returnRate,
-    saved?.inflationRate,
-  ])
+  }, [saved?.returnRate, saved?.inflationRate])
 
   async function save(e: FormEvent) {
     e.preventDefault()
@@ -66,7 +61,7 @@ export function RetirementCard({ today }: { today: Date }) {
             <strong>{money(data.projected)}</strong>
             <small className="muted">
               {' '}
-              at {data.settings.targetAge}
+              when {data.reference?.name} retires at {data.targetAge}
               {data.monthsToTarget ? `, in ${timeUntil(data.monthsToTarget)}` : ''}, in today’s
               dollars
             </small>
@@ -74,7 +69,7 @@ export function RetirementCard({ today }: { today: Date }) {
           <dl className="fund-figures">
             <dt>Retirement accounts today</dt>
             <dd>{money(data.startingBalance)}</dd>
-            <dt>Still to contribute</dt>
+            <dt>Still to contribute (everyone)</dt>
             <dd>{money(data.contributed)}</dd>
             <dt>Growth after inflation</dt>
             <dd className={data.growth < 0 ? 'negative' : undefined}>{money(data.growth)}</dd>
@@ -133,16 +128,63 @@ export function RetirementCard({ today }: { today: Date }) {
           )}
           {data.monthsToTarget === 0 && (
             <p className="muted">
-              The target age has been reached, so this is what the accounts hold today.
+              Everyone has reached their retirement age, so this is what the accounts hold today.
             </p>
           )}
         </>
       )}
-      {data && data.problem !== null && <p className="muted">{data.problem}</p>}
+      {data && data.problem !== null && (
+        <p className="muted">
+          {data.problem} <a href={hrefFor.settingsSection('profiles')}>Open Profiles</a>.
+        </p>
+      )}
       {data && data.accounts.length === 0 && (
         <p className="warn" role="status">
           No retirement accounts yet. Add an investment account of type IRA, 401(k) or another
           retirement plan and record its value.
+        </p>
+      )}
+
+      {data && data.people.length > 0 && (
+        <div className="table-wrap">
+          <table className="report-table" aria-label="People in the plan">
+            <thead>
+              <tr>
+                <th scope="col">Person</th>
+                <th scope="col">Retires</th>
+                <th scope="col" className="num">
+                  Contributes a month
+                </th>
+                <th scope="col" className="num">
+                  Income a year
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.people.map((p) => (
+                <tr key={p.memberId}>
+                  <th scope="row">{p.name}</th>
+                  <td>
+                    {p.retirementAge}
+                    <span className="muted"> ({monthYear(p.retirementMonth)})</span>
+                  </td>
+                  <td className="num">{money(p.monthlyContribution)}</td>
+                  <td className="num">{p.annualIncome > 0 ? money(p.annualIncome) : '–'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {data?.skipped.map((s) => (
+        <p key={s.memberId} className="muted">
+          {s.name}: {s.note}
+        </p>
+      ))}
+      {data && (
+        <p className="muted">
+          Each person’s birth month, retirement age, contribution and income are on their{' '}
+          <a href={hrefFor.settingsSection('profiles')}>profile</a>.
         </p>
       )}
 
@@ -153,37 +195,6 @@ export function RetirementCard({ today }: { today: Date }) {
           aria-label="Retirement assumptions"
           onSubmit={(e) => void save(e)}
         >
-          <label>
-            Born
-            <input
-              type="month"
-              aria-label="Birth month"
-              value={form.birthMonth}
-              onChange={(e) => set({ birthMonth: e.target.value })}
-            />
-          </label>
-          <label>
-            Retire at
-            <input
-              type="number"
-              aria-label="Target age"
-              min={TARGET_AGE_RANGE.min}
-              max={TARGET_AGE_RANGE.max}
-              step={1}
-              value={form.targetAge}
-              onChange={(e) => set({ targetAge: e.target.value })}
-            />
-          </label>
-          <label>
-            Contribution a month
-            <input
-              inputMode="decimal"
-              aria-label="Monthly contribution"
-              placeholder="0.00"
-              value={form.monthlyContribution}
-              onChange={(e) => set({ monthlyContribution: e.target.value })}
-            />
-          </label>
           <label>
             Return a year (%)
             <input
@@ -231,14 +242,16 @@ export function RetirementCard({ today }: { today: Date }) {
       {data && data.recentMonthlyContribution > 0 && (
         <p className="muted">
           Over the last 12 months about {money(data.recentMonthlyContribution)} a month was
-          transferred into them. Payroll deductions don’t show as transfers, so count those in the
-          contribution too.
+          transferred into them. Payroll deductions don’t show as transfers, so count those in each
+          person’s contribution too.
         </p>
       )}
       <p className="muted">
-        One person’s age sets the date. The portfolio grows at the return after inflation and each
-        month’s contribution stays the same in today’s dollars. Real returns vary year to year; this
-        is a steady-return estimate, not a forecast.
+        Everyone’s accounts are projected together to the month the last of you retires. Each
+        person’s contribution stops when they retire. The portfolio grows at the return after
+        inflation and contributions stay the same in today’s dollars, unless a profile lets them
+        grow with raises. Real returns vary year to year; this is a steady-return estimate, not a
+        forecast.
       </p>
     </section>
   )

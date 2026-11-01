@@ -109,8 +109,8 @@ export function RetirementSpendCard({ month, today }: { month: string; today: Da
             <strong>{money(data.requiredPortfolio)}</strong>
             <small className="muted">
               {' '}
-              needed to spend {money(data.annualSpend)} a year at a {data.settings.withdrawalRate}%
-              withdrawal rate
+              needed to cover {money(data.portfolioAnnual)} a year at a{' '}
+              {data.settings.withdrawalRate}% withdrawal rate
             </small>
           </p>
           {data.succeeds !== null && data.projected !== null && data.surplus !== null && (
@@ -118,15 +118,15 @@ export function RetirementSpendCard({ month, today }: { month: string; today: Da
               <p className={data.succeeds ? undefined : 'warn'} role="status">
                 {data.succeeds ? (
                   <>
-                    <strong>On track.</strong> At {data.settings.targetAge} the accounts are
-                    projected to hold {money(data.projected)}, {money(data.surplus)} more than
-                    needed.
+                    <strong>On track.</strong> At {data.targetAge}
+                    {ageOwner(data.referenceName)} the accounts are projected to hold{' '}
+                    {money(data.projected)}, {money(data.surplus)} more than needed.
                   </>
                 ) : (
                   <>
-                    <strong>Short by {money(-data.surplus)}.</strong> At {data.settings.targetAge}{' '}
-                    the accounts are projected to hold {money(data.projected)}, {data.fundedPercent}
-                    % of what is needed.
+                    <strong>Short by {money(-data.surplus)}.</strong> At {data.targetAge}
+                    {ageOwner(data.referenceName)} the accounts are projected to hold{' '}
+                    {money(data.projected)}, {data.fundedPercent}% of what is needed.
                   </>
                 )}
               </p>
@@ -160,17 +160,46 @@ export function RetirementSpendCard({ month, today }: { month: string; today: Da
           </dd>
           <dt>Spending that ends</dt>
           <dd>{money(data.endingMonthly)} a month today</dd>
-          <dt>Added costs at {data.settings.targetAge}</dt>
+          <dt>Added costs at {data.targetAge}</dt>
           <dd>{money(data.fixedAnnual)} a year</dd>
           <dt>Spend a year</dt>
           <dd>
             <strong>{money(data.annualSpend)}</strong>
+            {data.incomeReplacement !== null && (
+              <span className="muted">
+                {' '}
+                ({data.incomeReplacement}% of today’s household income)
+              </span>
+            )}
           </dd>
+          {data.benefits.length > 0 && (
+            <>
+              <dt>Social Security and pensions at {data.targetAge}</dt>
+              <dd>−{money(data.benefitsAnnual)} a year</dd>
+              <dt>The portfolio covers</dt>
+              <dd>
+                <strong>{money(data.portfolioAnnual)}</strong> a year
+              </dd>
+            </>
+          )}
         </dl>
+      )}
+      {data && data.benefits.length > 0 && (
+        <ul className="plain stack stretch" aria-label="Benefits">
+          {data.benefits.map((b) => (
+            <li key={`${b.memberId}-${b.kind}`}>
+              {b.name}’s {b.kind === 'pension' ? 'pension' : 'Social Security'}{' '}
+              <span className="muted">
+                {money(b.monthly * 12)} a year from age {b.claimAge}
+                {b.active ? '' : `, not yet paying at ${data.targetAge}`}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
       {data && data.schedule.length > 1 && (
         <p className="muted">
-          Spending changes with the added costs:{' '}
+          What the portfolio covers changes as added costs and benefits start and stop:{' '}
           {data.schedule
             .map(
               (s) =>
@@ -205,6 +234,9 @@ export function RetirementSpendCard({ month, today }: { month: string; today: Da
       )}
 
       <h3>Costs that don’t exist today</h3>
+      {data?.referenceName && (
+        <p className="muted">Ages are {data.referenceName}’s, who retires last.</p>
+      )}
       {data && data.fixedItems.length === 0 && (
         <p className="muted">
           Health insurance before Medicare, extra home maintenance: anything retirement adds.
@@ -218,7 +250,7 @@ export function RetirementSpendCard({ month, today }: { month: string; today: Da
                 {item.name}{' '}
                 <span className="muted">
                   {money(item.annualAmount)} a year, {ageWindow(item.startAge, item.endAge)}
-                  {item.active ? '' : `, not at ${data.settings.targetAge}`}
+                  {item.active ? '' : `, not at ${data.targetAge}`}
                 </span>
               </span>
               <span className="row">
@@ -364,6 +396,9 @@ export function RetirementSpendCard({ month, today }: { month: string; today: Da
     </section>
   )
 }
+
+/** ` (Jessica’s age)`, so the age isn't taken for the reader's own. */
+const ageOwner = (name: string | null) => (name ? ` (${name}’s age)` : '')
 
 function CategoryTable({ rows }: { rows: RetirementSpendCategory[] }) {
   return (

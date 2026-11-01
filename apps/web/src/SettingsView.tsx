@@ -6,6 +6,7 @@ import { BankPanel } from './BankPanel.tsx'
 import { DevicePanel } from './DevicePanel.tsx'
 import { IncomeRulesPanel } from './IncomeRulesPanel.tsx'
 import { PayeeRulesPanel } from './PayeeRulesPanel.tsx'
+import { ProfilesPanel } from './ProfilesPanel.tsx'
 import { SuggestPanel } from './SuggestPanel.tsx'
 import { YnabImportPanel } from './YnabImportPanel.tsx'
 import { budget } from './client.ts'
@@ -33,6 +34,8 @@ export function SettingsView(props: {
           <DevicePanel />
           <AccountPanel />
         </>
+      ) : section === 'profiles' ? (
+        <ProfilesPanel />
       ) : section === 'connections' ? (
         <Connections />
       ) : section === 'payee-rules' ? (
@@ -112,6 +115,7 @@ function Connections() {
 
 const SECTION_BLURBS: Record<Exclude<SettingsSection, null>, string> = {
   household: 'Name this device, sign in with a passkey, pair devices and turn on sync.',
+  profiles: 'Each person’s birth month, income and retirement plans, and how they are related.',
   connections: 'Link your bank through SimpleFIN and set up category suggestions.',
   'payee-rules': 'Categorize imported transactions by who was paid.',
   'income-rules': 'Assign a share of each paycheck, like the tithe, before anything else.',

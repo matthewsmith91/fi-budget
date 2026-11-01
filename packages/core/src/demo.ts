@@ -804,10 +804,35 @@ export async function seedDemoBudget(api: BudgetApi, opts: { today: string }): P
       priceDate: today,
     })
   }
-  await api.setRetirementSettings({
+  // Two people, linked as spouses so the plan counts both. Jessica is younger and retires
+  // first, so Matt's contributions run longer and his age sets the date.
+  await api.updateProfile(matt.id, {
     birthMonth: '1988-04',
-    targetAge: 65,
-    monthlyContribution: usd(1900),
+    retirementAge: 65,
+    monthlyContribution: usd(1100),
+    annualIncome: usd(125000),
+    incomeGrowth: 4,
+    contributionFollowsRaises: true,
+    socialSecurityMonthly: usd(2900),
+    socialSecurityAge: 67,
+  })
+  await api.updateProfile(jessica.id, {
+    birthMonth: '1990-09',
+    retirementAge: 62,
+    monthlyContribution: usd(800),
+    annualIncome: usd(88000),
+    incomeGrowth: 3,
+    socialSecurityMonthly: usd(2100),
+    socialSecurityAge: 67,
+    pensionMonthly: usd(450),
+    pensionAge: 62,
+  })
+  await api.linkProfiles({
+    memberId: matt.id,
+    relatedMemberId: jessica.id,
+    relationship: 'spouse',
+  })
+  await api.setRetirementSettings({
     returnRate: 7,
     inflationRate: 3,
     withdrawalRate: 4,

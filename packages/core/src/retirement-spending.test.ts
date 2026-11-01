@@ -14,6 +14,7 @@ async function makeApi() {
     now: () => '2026-10-28T00:00:00.000Z',
   })
   await api.createHousehold({ name: 'Smith', members: ['Matt', 'Jessica'] })
+  const [matt, jessica] = await api.listProfiles()
   const group = await api.createCategoryGroup({ name: 'Spending' })
   const rent = await api.createCategory({ groupId: group.id, name: 'Rent' })
   const travel = await api.createCategory({ groupId: group.id, name: 'Travel' })
@@ -35,9 +36,20 @@ async function makeApi() {
     await spend(date, travel.id, 40_000)
     await spend(date, college.id, 50_000)
   }
-  const settings = { ...(await api.getRetirementSettings()), birthMonth: '1961-10' }
-  await api.setRetirementSettings(settings)
-  return { api, rent, travel, college, k401, spend, checking, settings }
+  await api.updateProfile(matt!.id, { birthMonth: '1961-10' })
+  const settings = await api.getRetirementSettings()
+  return {
+    api,
+    rent,
+    travel,
+    college,
+    k401,
+    spend,
+    checking,
+    settings,
+    matt: matt!,
+    jessica: jessica!,
+  }
 }
 
 const ASOF = { month: '2026-09', asOf: '2026-10' }
@@ -178,7 +190,7 @@ describe('getRetirementSpending', () => {
   })
 
   it('adds the fixed items that apply at the target age', async () => {
-    const { api } = await makeApi()
+    const { api, matt } = await makeApi()
     await api.createRetirementFixedItem({
       name: 'Health insurance',
       annualAmount: 1_200_000,
@@ -200,8 +212,7 @@ describe('getRetirementSpending', () => {
     expect(s.schedule).toEqual([{ fromAge: 65, toAge: null, annual: 3_360_000 }])
 
     // retiring earlier makes the insurance part of the first years
-    const settings = await api.getRetirementSettings()
-    await api.setRetirementSettings({ ...settings, targetAge: 62 })
+    await api.updateProfile(matt.id, { retirementAge: 62 })
     const early = await api.getRetirementSpending(ASOF)
     expect(early.fixedAnnual).toBe(1_440_000)
     expect(early.schedule).toEqual([
@@ -236,8 +247,8 @@ describe('getRetirementSpending', () => {
   })
 
   it('says why it cannot compare without a birth month, or without any spending', async () => {
-    const { api, settings } = await makeApi()
-    await api.setRetirementSettings({ ...settings, birthMonth: null })
+    const { api, matt } = await makeApi()
+    await api.updateProfile(matt.id, { birthMonth: null })
     const s = await api.getRetirementSpending(ASOF)
     expect(s.projected).toBeNull()
     expect(s.projectionProblem).toMatch(/birth month/)
@@ -247,6 +258,66 @@ describe('getRetirementSpending', () => {
     const empty = await api.getRetirementSpending({ month: '2026-01', asOf: '2026-10' })
     expect(empty).toMatchObject({ averagedMonths: 0, annualSpend: 0, requiredPortfolio: null })
     expect(empty.categories).toEqual([])
+  })
+
+  it('takes Social Security and pensions off what the portfolio must cover', async () => {
+    const { api, matt } = await makeApi()
+    // Matt is 65 now: his benefit from 62 is being paid at the target age, the one from 67 is not
+    await api.updateProfile(matt.id, {
+      socialSecurityMonthly: 100_000,
+      socialSecurityAge: 67,
+      pensionMonthly: 50_000,
+      pensionAge: 62,
+    })
+    const s = await api.getRetirementSpending(ASOF)
+    expect(s.benefits.map((b) => [b.kind, b.monthly, b.fromAge, b.active])).toEqual([
+      ['social-security', 100_000, 67, false],
+      ['pension', 50_000, 62, true],
+    ])
+    expect(s.benefitsAnnual).toBe(600_000)
+    expect(s.annualSpend).toBe(3_120_000)
+    expect(s.portfolioAnnual).toBe(2_520_000)
+    expect(s.requiredPortfolio).toBe(63_000_000)
+    // Social Security joins at 67
+    expect(s.schedule).toEqual([
+      { fromAge: 65, toAge: 67, annual: 2_520_000 },
+      { fromAge: 67, toAge: null, annual: 1_320_000 },
+    ])
+  })
+
+  it('places a spouse’s benefit on the age of whoever retires last', async () => {
+    const { api, matt, jessica } = await makeApi()
+    // Jessica is 5 years younger (born 1966-10, 60 now), so she retires 5 years after Matt
+    await api.updateProfile(jessica.id, {
+      birthMonth: '1966-10',
+      retirementAge: 65,
+      socialSecurityMonthly: 100_000,
+      socialSecurityAge: 67,
+      annualIncome: 80_000_00,
+    })
+    await api.updateProfile(matt.id, { annualIncome: 120_000_00 })
+    await api.linkProfiles({
+      memberId: matt.id,
+      relatedMemberId: jessica.id,
+      relationship: 'spouse',
+    })
+    const s = await api.getRetirementSpending(ASOF)
+    // she is the last to retire, so the target is her 65th birthday and the ages are hers
+    expect(s.referenceName).toBe('Jessica')
+    expect(s.targetAge).toBe(65)
+    expect(s.benefits).toEqual([
+      expect.objectContaining({ name: 'Jessica', fromAge: 67, active: false }),
+    ])
+    expect(s.householdIncome).toBe(200_000_00)
+    expect(s.incomeReplacement).toBe(Math.round((3_120_000 * 100) / 20_000_000))
+  })
+
+  it('is funded when benefits cover all the spending', async () => {
+    const { api, matt } = await makeApi()
+    await api.updateProfile(matt.id, { pensionMonthly: 400_000, pensionAge: 60 })
+    const s = await api.getRetirementSpending(ASOF)
+    expect(s).toMatchObject({ portfolioAnnual: 0, requiredPortfolio: 0, fundedPercent: 100 })
+    expect(s.succeeds).toBe(true)
   })
 
   it('validates the new assumptions', async () => {

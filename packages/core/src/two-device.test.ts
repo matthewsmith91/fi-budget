@@ -892,19 +892,11 @@ describe('planning on two devices', () => {
 })
 
 describe('retirement planning on two devices', () => {
-  const settings = {
-    birthMonth: '1991-02',
-    targetAge: 65,
-    monthlyContribution: 100_000,
-    returnRate: 7,
-    inflationRate: 3,
-    withdrawalRate: 4,
-    lookbackMonths: 12,
-  }
+  const settings = { returnRate: 7, inflationRate: 3, withdrawalRate: 4, lookbackMonths: 12 }
 
   it('lands one assumptions row when both devices save first, newest value per field', async () => {
     await a.api.setRetirementSettings(settings)
-    await b.api.setRetirementSettings({ ...settings, targetAge: 60 })
+    await b.api.setRetirementSettings({ ...settings, returnRate: 6 })
     await converge()
     const rows = await a.adapter.query('SELECT id FROM retirement_assumptions')
     expect(rows).toHaveLength(1)
@@ -918,6 +910,61 @@ describe('retirement planning on two devices', () => {
       .flatMap((g) => g.categories)
       .find((c) => c.id === fun)
     expect(shared).toMatchObject({ retirementStatus: 'changes', retirementMultiplier: 1.5 })
+  })
+})
+
+describe('profiles on two devices', () => {
+  it('shares a new person, their settings and their links', async () => {
+    await a.api.createHousehold({ name: 'Smiths', members: ['Matt'] })
+    await converge()
+    const jessica = await b.api.createProfile({
+      displayName: 'Jessica',
+      birthMonth: '1990-09',
+      annualIncome: 90_000_00,
+    })
+    const [matt] = await b.api.listProfiles()
+    await b.api.linkProfiles({
+      memberId: matt!.id,
+      relatedMemberId: jessica.id,
+      relationship: 'spouse',
+    })
+    await converge()
+    const shared = await a.api.listProfiles()
+    expect(shared.map((p) => p.displayName)).toEqual(['Matt', 'Jessica'])
+    expect(shared[1]).toMatchObject({ birthMonth: '1990-09', annualIncome: 90_000_00 })
+    expect(shared[0]!.links).toEqual([
+      { memberId: jessica.id, displayName: 'Jessica', relationship: 'spouse' },
+    ])
+  })
+
+  it('lands one link when both devices link the same pair, and can link again after unlinking', async () => {
+    await a.api.createHousehold({ name: 'Smiths', members: ['Matt', 'Jessica'] })
+    await converge()
+    const [matt, jessica] = await a.api.listProfiles()
+    await a.api.linkProfiles({
+      memberId: matt!.id,
+      relatedMemberId: jessica!.id,
+      relationship: 'partner',
+    })
+    await b.api.linkProfiles({
+      memberId: jessica!.id,
+      relatedMemberId: matt!.id,
+      relationship: 'spouse',
+    })
+    await converge()
+    expect(await a.adapter.query('SELECT id FROM member_links')).toHaveLength(1)
+    expect((await a.api.listProfiles())[0]!.links).toEqual((await b.api.listProfiles())[0]!.links)
+
+    await a.api.unlinkProfiles({ memberId: matt!.id, relatedMemberId: jessica!.id })
+    await converge()
+    expect((await b.api.listProfiles())[0]!.links).toEqual([])
+    await b.api.linkProfiles({
+      memberId: matt!.id,
+      relatedMemberId: jessica!.id,
+      relationship: 'spouse',
+    })
+    await converge()
+    expect((await a.api.listProfiles())[0]!.links).toHaveLength(1)
   })
 })
 

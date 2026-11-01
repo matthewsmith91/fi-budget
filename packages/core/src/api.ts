@@ -17,6 +17,7 @@ import { currentVersion } from './migrations.ts'
 import { monthlyReviewApi, type MonthlyReviewApi } from './monthly-review.ts'
 import { netWorthApi, type NetWorthApi } from './net-worth.ts'
 import { payeeRulesApi, type PayeeRulesApi } from './payee-rules.ts'
+import { profilesApi, type ProfilesApi } from './profiles.ts'
 import { reconcileApi, type ReconcileApi } from './reconcile.ts'
 import { recurringApi, type RecurringApi } from './recurring.ts'
 import { reportsApi, type ReportsApi } from './reports.ts'
@@ -72,6 +73,7 @@ export interface BudgetApi
     IncomeRulesApi,
     ReportsApi,
     NetWorthApi,
+    ProfilesApi,
     RetirementApi,
     RetirementSpendingApi,
     EducationApi,
@@ -154,6 +156,7 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
     ...incomeRulesApi(crud),
     ...reportsApi(crud),
     ...netWorthApi(crud),
+    ...profilesApi(crud),
     ...retirementApi(crud),
     ...retirementSpendingApi(crud),
     ...educationApi(crud),
@@ -183,12 +186,14 @@ export function createBudgetApi(deps: ApiDeps): BudgetApi {
         const at = now()
         const log = crud.changes(tx)
         await log.insert('households', { id: householdId, name: cleanName, created_at: at })
-        for (const display of names) {
+        // a millisecond apart, so "who was added first" is the order given and not a coin toss
+        // between random ids; the retirement plan starts from the first person
+        for (const [i, display] of names.entries()) {
           await log.insert('members', {
             id: newId(),
             household_id: householdId,
             display_name: display,
-            created_at: at,
+            created_at: new Date(Date.parse(at) + i).toISOString(),
           })
         }
       })

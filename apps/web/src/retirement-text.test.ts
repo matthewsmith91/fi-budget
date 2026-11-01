@@ -34,53 +34,28 @@ describe('retirement text', () => {
   })
 
   describe('the settings form', () => {
-    const form = {
-      birthMonth: '1991-02',
-      targetAge: '60',
-      monthlyContribution: '1,500.00',
-      returnRate: '6.5',
-      inflationRate: '2.5',
-    }
+    const form = { returnRate: '6.5', inflationRate: '2.5' }
 
     it('reads the text as settings', () => {
       expect(parseRetirementForm(form)).toEqual({
         ok: true,
-        settings: {
-          birthMonth: '1991-02',
-          targetAge: 60,
-          monthlyContribution: 150_000,
-          returnRate: 6.5,
-          inflationRate: 2.5,
-        },
-      })
-    })
-
-    it('treats an empty contribution as none and an empty birth month as unset', () => {
-      const parsed = parseRetirementForm({ ...form, monthlyContribution: '', birthMonth: '' })
-      expect(parsed).toMatchObject({
-        ok: true,
-        settings: { monthlyContribution: 0, birthMonth: null },
+        settings: { returnRate: 6.5, inflationRate: 2.5 },
       })
     })
 
     it('says what is wrong', () => {
-      expect(parseRetirementForm({ ...form, monthlyContribution: 'lots' })).toMatchObject({
+      expect(parseRetirementForm({ ...form, returnRate: '' })).toMatchObject({
         ok: false,
-        error: expect.stringMatching(/contribution/),
+        error: expect.stringMatching(/return/),
       })
-      expect(parseRetirementForm({ ...form, targetAge: '60.5' })).toMatchObject({ ok: false })
-      expect(parseRetirementForm({ ...form, returnRate: '' })).toMatchObject({ ok: false })
-      expect(parseRetirementForm({ ...form, inflationRate: 'x' })).toMatchObject({ ok: false })
+      expect(parseRetirementForm({ ...form, inflationRate: 'x' })).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/inflation/i),
+      })
     })
 
     it('round-trips through the form', () => {
-      const settings = {
-        birthMonth: '1991-02',
-        targetAge: 65,
-        monthlyContribution: 123_456,
-        returnRate: 7,
-        inflationRate: 3,
-      }
+      const settings = { returnRate: 7, inflationRate: 3 }
       expect(parseRetirementForm(retirementFormOf(settings))).toEqual({ ok: true, settings })
     })
   })

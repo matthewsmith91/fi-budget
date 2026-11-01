@@ -15,6 +15,7 @@ export type Route =
 
 export const SETTINGS_SECTIONS = [
   { id: 'household', label: 'Household', group: 'setup' },
+  { id: 'profiles', label: 'Profiles', group: 'setup' },
   { id: 'connections', label: 'Connections', group: 'setup' },
   { id: 'payee-rules', label: 'Payee rules', group: 'automation' },
   { id: 'income-rules', label: 'Income rules', group: 'automation' },

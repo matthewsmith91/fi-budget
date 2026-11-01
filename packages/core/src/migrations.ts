@@ -517,6 +517,63 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX transactions_emergency ON transactions(date) WHERE emergency = 1`,
     ],
   },
+  {
+    version: 21,
+    name: 'profiles',
+    // A member is a profile: the personal facts the retirement plan needs, one set per person
+    // instead of one set for the household. Money is integer cents in today's dollars, rates are
+    // percent a year. `income_growth` is a nominal yearly raise; with `contribution_follows_raises`
+    // the monthly contribution grows by that raise after inflation, otherwise it stays flat.
+    // Social Security and a pension are monthly cents from the age named.
+    //
+    // `member_links` says how two members relate. A link is one row per pair under the id
+    // `link-<lower id>:<higher id>` so two devices linking the same pair converge on one row;
+    // `relationship` is null once unlinked, never deleted, because a delete is permanent and the
+    // pair may be linked again. Spouses and partners share finances in the retirement plan;
+    // `relative` is a record only.
+    //
+    // The household's old retirement row followed one unnamed person. Their birth month, target
+    // age and contribution move to the first member (the same one on every device), and the
+    // columns stay in `retirement_assumptions` unread, because older devices still write them.
+    up: [
+      `ALTER TABLE members ADD COLUMN birth_month TEXT
+         CHECK (birth_month IS NULL OR birth_month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]')`,
+      `ALTER TABLE members ADD COLUMN retirement_age INTEGER NOT NULL DEFAULT 65
+         CHECK (retirement_age BETWEEN 40 AND 90)`,
+      `ALTER TABLE members ADD COLUMN monthly_contribution INTEGER NOT NULL DEFAULT 0
+         CHECK (monthly_contribution >= 0)`,
+      `ALTER TABLE members ADD COLUMN annual_income INTEGER NOT NULL DEFAULT 0
+         CHECK (annual_income >= 0)`,
+      `ALTER TABLE members ADD COLUMN income_growth REAL NOT NULL DEFAULT 3`,
+      `ALTER TABLE members ADD COLUMN contribution_follows_raises INTEGER NOT NULL DEFAULT 0
+         CHECK (contribution_follows_raises IN (0, 1))`,
+      `ALTER TABLE members ADD COLUMN social_security_monthly INTEGER NOT NULL DEFAULT 0
+         CHECK (social_security_monthly >= 0)`,
+      `ALTER TABLE members ADD COLUMN social_security_age INTEGER NOT NULL DEFAULT 67
+         CHECK (social_security_age BETWEEN 62 AND 70)`,
+      `ALTER TABLE members ADD COLUMN pension_monthly INTEGER NOT NULL DEFAULT 0
+         CHECK (pension_monthly >= 0)`,
+      `ALTER TABLE members ADD COLUMN pension_age INTEGER NOT NULL DEFAULT 65
+         CHECK (pension_age BETWEEN 40 AND 90)`,
+      `CREATE TABLE member_links (
+        id TEXT PRIMARY KEY,
+        member_id TEXT NOT NULL REFERENCES members(id),
+        related_member_id TEXT NOT NULL REFERENCES members(id),
+        relationship TEXT CHECK (relationship IS NULL
+          OR relationship IN ('spouse', 'partner', 'relative')),
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        CHECK (member_id <> related_member_id)
+      )`,
+      `UPDATE members SET
+         birth_month = (SELECT birth_month FROM retirement_assumptions ORDER BY created_at, id LIMIT 1),
+         retirement_age = (SELECT target_age FROM retirement_assumptions ORDER BY created_at, id LIMIT 1),
+         monthly_contribution = (SELECT monthly_contribution FROM retirement_assumptions
+                                 ORDER BY created_at, id LIMIT 1)
+       WHERE id = (SELECT id FROM members ORDER BY created_at, id LIMIT 1)
+         AND EXISTS (SELECT 1 FROM retirement_assumptions)`,
+    ],
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

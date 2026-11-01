@@ -1,4 +1,4 @@
-import { parseCents, type RetirementSettings, type RetirementStatus } from '@budget-fi/core'
+import type { RetirementSettings, RetirementStatus } from '@budget-fi/core'
 import { monthLabel } from './format.ts'
 
 /** `35`, `35.5`; the projection's ages come in hundredths. */
@@ -38,9 +38,6 @@ export const RETIREMENT_STATUS_LABELS: Record<RetirementStatus, string> = {
 export type RetirementBasics = Omit<RetirementSettings, 'withdrawalRate' | 'lookbackMonths'>
 
 export interface RetirementForm {
-  birthMonth: string
-  targetAge: string
-  monthlyContribution: string
   returnRate: string
   inflationRate: string
 }
@@ -49,37 +46,17 @@ export interface RetirementForm {
 export function parseRetirementForm(
   form: RetirementForm,
 ): { ok: true; settings: RetirementBasics } | { ok: false; error: string } {
-  const monthlyContribution =
-    form.monthlyContribution.trim() === '' ? 0 : parseCents(form.monthlyContribution)
-  if (monthlyContribution === null || monthlyContribution < 0) {
-    return { ok: false, error: 'Enter the monthly contribution as dollars, like 1,500.00' }
-  }
   const number = (text: string) => (text.trim() === '' ? NaN : Number(text))
-  const targetAge = number(form.targetAge)
-  if (!Number.isInteger(targetAge))
-    return { ok: false, error: 'Enter the target age in whole years' }
   const returnRate = number(form.returnRate)
   if (!Number.isFinite(returnRate))
     return { ok: false, error: 'Enter the yearly return as a percent, like 7' }
   const inflationRate = number(form.inflationRate)
   if (!Number.isFinite(inflationRate))
     return { ok: false, error: 'Enter inflation as a percent, like 3' }
-  return {
-    ok: true,
-    settings: {
-      birthMonth: form.birthMonth === '' ? null : form.birthMonth,
-      targetAge,
-      monthlyContribution,
-      returnRate,
-      inflationRate,
-    },
-  }
+  return { ok: true, settings: { returnRate, inflationRate } }
 }
 
 export const retirementFormOf = (s: RetirementBasics): RetirementForm => ({
-  birthMonth: s.birthMonth ?? '',
-  targetAge: String(s.targetAge),
-  monthlyContribution: s.monthlyContribution === 0 ? '' : (s.monthlyContribution / 100).toFixed(2),
   returnRate: String(s.returnRate),
   inflationRate: String(s.inflationRate),
 })
