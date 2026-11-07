@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-07T19:40:37.440Z",
+  "title": "Design System: Household Budget",
+  "extensions": {
+    "colorMeta": {
+      "ledger-blue": {
+        "role": "primary",
+        "displayName": "Ledger Blue",
+        "canonical": "#2f78c4",
+        "tonalRamp": [
+          "#0f2a47",
+          "#17406b",
+          "#22578f",
+          "#2f78c4",
+          "#5b9be0",
+          "#8dbbec",
+          "#c2dcf6",
+          "#e8f2fc"
+        ]
+      },
+      "harbor-navy": {
+        "role": "secondary",
+        "displayName": "Harbor Navy",
+        "canonical": "#1f2740",
+        "tonalRamp": [
+          "#10162a",
+          "#1f2740",
+          "#2b3556",
+          "#333d5e",
+          "#3a64a8",
+          "#98a3bf",
+          "#dfe5f3",
+          "#f1f4fa"
+        ]
+      },
+      "funded-bg": {
+        "role": "tertiary",
+        "displayName": "Funded",
+        "canonical": "#bfe8b5",
+        "tonalRamp": [
+          "#1f4d17",
+          "#2c5a2a",
+          "#3f7a33",
+          "#5e9e52",
+          "#8cc97f",
+          "#bfe8b5",
+          "#d3f3cc",
+          "#eefaeb"
+        ]
+      },
+      "overspent-bg": {
+        "role": "tertiary",
+        "displayName": "Overspent",
+        "canonical": "#f6c9c4",
+        "tonalRamp": [
+          "#5a120b",
+          "#6a2620",
+          "#8a1c12",
+          "#b3261e",
+          "#e0776c",
+          "#f6c9c4",
+          "#ffd8d3",
+          "#fdf0ee"
+        ]
+      },
+      "caution-bg": {
+        "role": "tertiary",
+        "displayName": "Caution",
+        "canonical": "#fff4d6",
+        "tonalRamp": [
+          "#3b2f0b",
+          "#5c4200",
+          "#7d5c06",
+          "#a8810f",
+          "#d9b03a",
+          "#f3d77d",
+          "#ffe7a3",
+          "#fff4d6"
+        ]
+      },
+      "mist-page": {
+        "role": "neutral",
+        "displayName": "Mist Page",
+        "canonical": "#f4f6fa",
+        "tonalRamp": [
+          "#151a28",
+          "#1d2335",
+          "#2c3450",
+          "#636d80",
+          "#96a1ba",
+          "#e3e7ee",
+          "#eef1f7",
+          "#f4f6fa"
+        ]
+      },
+      "slate-ink": {
+        "role": "neutral",
+        "displayName": "Slate Ink",
+        "canonical": "#1d2433"
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e3e7ee"
+      },
+      "cleared-green": {
+        "role": "tertiary",
+        "displayName": "Cleared Green",
+        "canonical": "#3d9a5b"
+      },
+      "frame-strong": {
+        "role": "secondary",
+        "displayName": "Frame Strong",
+        "canonical": "#ffffff"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page titles and the budget's month name."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Ready to Assign amount and hero figures."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Card and dialog headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "All text and table rows, tabular figures."
+      },
+      "small": {
+        "displayName": "Small",
+        "purpose": "Meta, totals rows, notes and hints."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase table column headers only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "float",
+        "value": "0 8px 24px rgb(0 0 0 / 0.18)",
+        "purpose": "Token --float-shadow. Dropdown lists, menus and comboboxes that overlay content. Nothing in the page flow."
+      },
+      {
+        "name": "scrim",
+        "value": "rgb(8 12 24 / 0.55)",
+        "purpose": "Token --scrim. Behind dialogs, sheets and the phone's account drawer."
+      }
+    ],
+    "motion": [
+      {
+        "name": "sheet-up",
+        "value": "0.18s ease-out",
+        "purpose": "Phone bottom sheet rising 1.5rem with fade; only without reduced motion."
+      },
+      {
+        "name": "fade",
+        "value": "0.15s ease-out",
+        "purpose": "Small state fades such as the saved mark."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "small",
+        "value": "40rem"
+      },
+      {
+        "name": "phone",
+        "value": "800px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one action in a view or form.",
+      "html": "<button class=\"ds-btn-primary\">Assign</button>",
+      "css": ".ds-btn-primary { font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; min-height: 2.25rem; padding: 0 0.9rem; border: 1px solid transparent; border-radius: 0.4rem; background: #2f78c4; color: #fff; cursor: pointer; } .ds-btn-primary:hover { background: #22578f; } .ds-btn-primary:focus-visible { outline: 2px solid #2f78c4; outline-offset: 1px; } .ds-btn-primary:disabled { opacity: 0.45; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Every other action; danger variant uses error text.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button> <button class=\"ds-btn-secondary ds-danger\">Remove</button>",
+      "css": ".ds-btn-secondary { font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; min-height: 2.25rem; padding: 0 0.9rem; border: 1px solid #e3e7ee; border-radius: 0.4rem; background: transparent; color: #1d2433; cursor: pointer; } .ds-btn-secondary:hover { background: #f0f4fb; } .ds-btn-secondary:focus-visible { outline: 2px solid #2f78c4; outline-offset: 1px; } .ds-danger { color: #b3261e; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Labelled field; label sits above.",
+      "html": "<label class=\"ds-field\">Payee<input class=\"ds-input\" value=\"Grocery Co-op\"></label>",
+      "css": ".ds-field { display: grid; gap: 0.25rem; font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; color: #1d2433; } .ds-input { font: inherit; min-height: 2.25rem; padding: 0 0.55rem; border: 1px solid #e3e7ee; border-radius: 0.4rem; background: #fff; color: #1d2433; } .ds-input:focus-visible { outline: 2px solid #2f78c4; outline-offset: 1px; }"
+    },
+    {
+      "name": "Status Pills",
+      "kind": "chip",
+      "refersTo": "pill-funded",
+      "description": "Available money state: funded, settled, overspent.",
+      "html": "<span class=\"ds-pill ds-good\">$412.50</span> <span class=\"ds-pill ds-zero\">$0.00</span> <span class=\"ds-pill ds-bad\">−$38.20</span>",
+      "css": ".ds-pill { display: inline-block; min-width: 5.5rem; padding: 0.1rem 0.6rem; border-radius: 999px; text-align: center; font: 600 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; } .ds-good { background: #bfe8b5; color: #1f4d17; } .ds-zero { background: #e4e8ef; color: #5a6477; } .ds-bad { background: #f6c9c4; color: #8a1c12; }"
+    },
+    {
+      "name": "Ready to Assign",
+      "kind": "custom",
+      "refersTo": "ready-to-assign",
+      "description": "The budget's one colored figure block.",
+      "html": "<div class=\"ds-rta\"><span class=\"ds-rta-amount\">$1,240.00</span><span class=\"ds-rta-title\">Ready to Assign</span></div>",
+      "css": ".ds-rta { display: inline-grid; justify-items: end; padding: 0.45rem 1.1rem; border-radius: 0.6rem; min-width: 11rem; background: #bfe8b5; color: #1f4d17; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; } .ds-rta-amount { font-size: 1.35rem; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; } .ds-rta-title { font-size: 0.78rem; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat bordered container for reports and settings.",
+      "html": "<section class=\"ds-card\"><h2>Net worth</h2><p class=\"ds-muted\">End of October</p><strong>$184,220</strong></section>",
+      "css": ".ds-card { background: #fff; border: 1px solid #e3e7ee; border-radius: 0.6rem; padding: 1rem 1.1rem; font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; color: #1d2433; font-variant-numeric: tabular-nums; } .ds-card h2 { margin: 0 0 0.6rem; font-size: 1.05rem; } .ds-muted { color: #636d80; margin: 0; font-size: 0.85rem; }"
+    },
+    {
+      "name": "Top Nav",
+      "kind": "nav",
+      "refersTo": "topnav",
+      "description": "Desk page bar with underline for the current page.",
+      "html": "<nav class=\"ds-topnav\"><a class=\"ds-topnav-link ds-active\" href=\"#\">Budget</a><a class=\"ds-topnav-link\" href=\"#\">Inbox</a><a class=\"ds-topnav-link\" href=\"#\">Plan ▾</a></nav>",
+      "css": ".ds-topnav { display: flex; align-items: stretch; gap: 0.25rem; height: 2.75rem; padding: 0 1.5rem; background: #fff; border-bottom: 1px solid #e3e7ee; font: 500 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; } .ds-topnav-link { display: inline-flex; align-items: center; padding: 0 0.8rem; color: #1d2433; text-decoration: none; border-bottom: 3px solid transparent; } .ds-topnav-link:hover { background: #f0f4fb; } .ds-topnav-link:focus-visible { outline: 2px solid #2f78c4; outline-offset: -2px; } .ds-active { border-bottom-color: #2f78c4; font-weight: 650; }"
+    },
+    {
+      "name": "Phone Tab Bar",
+      "kind": "nav",
+      "refersTo": "tabbar",
+      "description": "Navy bottom bar on phones.",
+      "html": "<nav class=\"ds-tabbar\"><a class=\"ds-tab ds-tab-active\">Budget</a><a class=\"ds-tab\">Inbox</a><a class=\"ds-tab\">Register</a><a class=\"ds-tab\">Reports</a><a class=\"ds-tab\">More</a></nav>",
+      "css": ".ds-tabbar { display: grid; grid-template-columns: repeat(5, 1fr); background: #1f2740; border-top: 1px solid #333d5e; font: 500 0.75rem system-ui, -apple-system, 'Segoe UI', sans-serif; } .ds-tab { display: flex; align-items: center; justify-content: center; min-height: 3.25rem; color: #98a3bf; text-decoration: none; cursor: pointer; } .ds-tab:hover { color: #dfe5f3; } .ds-tab-active { color: #fff; box-shadow: inset 0 3px 0 #3a64a8; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Instrument",
+    "overview": "The app is a precise tool that stays out of the way until a number needs attention. Most of every screen is quiet: a cool off-white page, white bordered surfaces, slate text, system type set with tabular figures so columns of money line up to the cent. Against that calm, the only things that carry color are the state of money (funded, settled, overspent, needs a look) and the one place to act. When something turns red, it is because a category is overspent, never because a designer wanted energy.\n\nDensity is that of a working ledger, not a dashboard. Tables are compact (0.4rem by 0.75rem cells, hairline rules), headers are small uppercase labels, and figures sit right-aligned. On a phone the same content opens up to 44px targets, a navy tab bar under the thumb and bottom sheets for anything that used to be a menu, because the daily check-in happens one-handed. A deep navy frame (the desk sidebar, the phone's top and tab bars) holds the household's accounts and the way around; the white working surface sits inside it.\n\nLight and dark follow the system setting with the same roles: the dark theme deepens the navy frame and lifts the blue accent rather than inverting the design.",
+    "keyCharacteristics": [
+      "Calm neutral working surface, navy frame, one blue for action.",
+      "Color means money state, nothing else.",
+      "Tabular figures everywhere money appears.",
+      "Flat surfaces separated by hairlines; shadow only on what floats.",
+      "Phone-first touch sizes (44px) and bottom sheets below 800px."
+    ],
+    "rules": [
+      {
+        "name": "The Color Means Status Rule",
+        "body": "Saturated color appears only to report money state (funded, settled, overspent, caution, error) or to mark the one action or current place (Ledger Blue). No decorative color, no colored section headers, no tinted cards for variety.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paired Ink Rule",
+        "body": "A status background always carries its own ink color (funded-bg with funded-fg, and so on). Never put status color on text alone over white.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "Every number that is money is set with `font-variant-numeric: tabular-nums` and right-aligned in its column. A figure that jiggles as it changes, or doesn't line up with the one above it, is a bug.",
+        "section": "typography"
+      },
+      {
+        "name": "The Only Floats Cast Shadows Rule",
+        "body": "A surface that sits in the page flow (card, table, banner) has a border and no shadow. Only an element that hovers over other content gets the Float shadow.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** use Ledger Blue (#2f78c4) only for actions, links, focus and the current place.",
+      "**Do** show money state with the paired pills (funded #bfe8b5/#1f4d17, settled #e4e8ef/#5a6477, overspent #f6c9c4/#8a1c12).",
+      "**Do** set every amount in tabular figures, right-aligned.",
+      "**Do** separate surfaces with 1px Hairline (#e3e7ee) and the Mist Page to Paper Surface step.",
+      "**Do** give every phone target at least 44px (28px only where width is scarcer than reach, like a goal's menu) and phone inputs 16px text.",
+      "**Do** make phone views fit the width: a list or card, never a table that scrolls or clips its figures.",
+      "**Do** define both themes through the CSS custom properties on `:root`, never with hard-coded colors in components.",
+      "**Do** respect `prefers-reduced-motion`: motion is a short ease-out (0.15-0.18s) or nothing."
+    ],
+    "donts": [
+      "**Don't** use color for decoration, variety or emphasis that isn't money state or action.",
+      "**Don't** put a shadow on cards, tables or banners; only floating menus and lists get the Float shadow.",
+      "**Don't** add a second typeface or display font; hierarchy comes from weight and size.",
+      "**Don't** show a status color as text alone; always use the background with its paired ink.",
+      "**Don't** add native `prompt()`/`confirm()` in new UI; use the in-app confirm dialog or a sheet.",
+      "**Don't** hard-code a colour in a component rule; add a `:root` token (the QR code's white backing is the one exception)."
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "border-accent-on-rounded",
+        "value": "*",
+        "files": [
+          "apps/web/src/index.css"
+        ],
+        "createdAt": "2026-11-07T19:40:31.143Z",
+        "reason": "model triage: .topnav-link sets border-radius: 0; the 3px bottom border is the top nav's active-page underline documented in DESIGN.md, not a card accent"
+      }
+    ]
+  }
+}

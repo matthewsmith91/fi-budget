@@ -707,7 +707,16 @@ export function BudgetView({ today, month: routeMonth }: { today: Date; month: s
       )}
 
       {managedGroup && (
-        <GroupSheet group={managedGroup} all={all} onClose={() => setManaging(null)} />
+        <GroupSheet
+          group={managedGroup}
+          all={all}
+          onAddCategory={() => {
+            setManaging(null)
+            setAddingTo(managedGroup.id)
+            if (collapsed.has(managedGroup.id)) toggle(managedGroup.id)
+          }}
+          onClose={() => setManaging(null)}
+        />
       )}
 
       {retiring && (

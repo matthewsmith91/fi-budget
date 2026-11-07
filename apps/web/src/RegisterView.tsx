@@ -506,10 +506,12 @@ function TransactionLine(props: {
   return (
     // The whole row is a click target for the mouse; the payee button is what the keyboard and
     // screen readers use, and its click bubbles up here.
-    <tr className="txn-row" data-txn={t.id} onClick={props.onOpen}>
-      <td>{shortDate(t.date)}</td>
-      {props.showAccountColumn && <td>{names.account.get(t.accountId)?.name ?? ''}</td>}
-      <td>
+    <tr className="txn-row line" data-txn={t.id} onClick={props.onOpen}>
+      <td className="line-date">{shortDate(t.date)}</td>
+      {props.showAccountColumn && (
+        <td className="line-account">{names.account.get(t.accountId)?.name ?? ''}</td>
+      )}
+      <td className="line-payee">
         <button type="button" className="row-open">
           {payee || <span className="sr-only">Edit transaction</span>}
         </button>
@@ -535,9 +537,13 @@ function TransactionLine(props: {
           </>
         )}
       </td>
-      <td className={category === 'Uncategorized' ? 'uncategorized' : undefined}>{category}</td>
-      <td className="num">{t.amount < 0 ? money(-t.amount) : ''}</td>
-      <td className="num">{t.amount > 0 ? money(t.amount) : ''}</td>
+      <td
+        className={category === 'Uncategorized' ? 'line-category uncategorized' : 'line-category'}
+      >
+        {category}
+      </td>
+      <td className="num line-amount">{t.amount < 0 ? money(-t.amount) : ''}</td>
+      <td className="num line-amount line-inflow">{t.amount > 0 ? money(t.amount) : ''}</td>
       <td className="cleared-col">
         <button
           type="button"

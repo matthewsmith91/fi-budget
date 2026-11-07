@@ -1,13 +1,15 @@
 import { matchPayeeRule } from '@budget-fi/core'
 import type { Account, CategoryGroup, InboxItem, Transaction } from '@budget-fi/core'
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { messageOf } from './errors.ts'
 import { money, shortDate } from './format.ts'
 import { useAsync } from './hooks.ts'
 import { ruleTextFor } from './rule-text.ts'
+import { Sheet } from './Sheet.tsx'
 import { suggestApi } from './suggest.ts'
+import { useConfirm } from './use-confirm.tsx'
 
 const MAX_SUGGEST = 50
 
@@ -21,6 +23,8 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
   const [suggested, setSuggested] = useState<Record<string, string>>({})
   const [suggesting, setSuggesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [remembering, setRemembering] = useState<Transaction | null>(null)
+  const confirm = useConfirm()
 
   const accountById = new Map(accounts.map((a) => [a.id, a]))
   const items = inbox.data ?? []
@@ -66,18 +70,14 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
     }
   }
 
-  function remember(t: Transaction) {
-    const categoryId = t.splits[0]?.categoryId
-    if (!t.payee || !categoryId) return
-    const match = prompt(
-      `Put every payee containing these words in ${categoryNames.get(categoryId) ?? 'this category'}:`,
-      ruleTextFor(t.payee),
-    )?.trim()
-    if (!match) return
-    void run(async () => {
-      await budget.createPayeeRule({ match, categoryId })
-      await budget.applyPayeeRules()
+  async function remove(t: Transaction) {
+    const ok = await confirm.ask({
+      title: `Remove ${t.payee ?? 'this transaction'}?`,
+      message: <p>It won’t be imported again the next time the bank is fetched.</p>,
+      confirmLabel: 'Remove',
+      danger: true,
     })
+    if (ok) await run(() => budget.deleteTransaction(t.id))
   }
 
   return (
@@ -118,7 +118,7 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
       )}
 
       <div className="table-wrap">
-        <table className="register">
+        <table className="register inbox">
           <thead>
             <tr>
               <th scope="col">Date</th>
@@ -158,12 +158,9 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
                   item.transaction.payee !== null &&
                   matchPayeeRule(rules.data ?? [], item.transaction.payee) === null
                 }
-                onRemember={() => remember(item.transaction)}
+                onRemember={() => setRemembering(item.transaction)}
                 onApprove={() => run(() => budget.approveTransactions([item.transaction.id]))}
-                onRemove={() => {
-                  if (!confirm('Remove this transaction? It won’t be imported again.')) return
-                  void run(() => budget.deleteTransaction(item.transaction.id))
-                }}
+                onRemove={() => void remove(item.transaction)}
                 onMerge={(intoId) => run(() => budget.mergeImport(item.transaction.id, intoId))}
               />
             ))}
@@ -176,7 +173,70 @@ export function InboxView({ accounts }: { accounts: Account[] }) {
           </p>
         )}
       </div>
+
+      {remembering?.payee && remembering.splits[0]?.categoryId && (
+        <RememberSheet
+          payee={remembering.payee}
+          categoryName={categoryNames.get(remembering.splits[0].categoryId) ?? 'this category'}
+          onSave={(match) =>
+            run(async () => {
+              await budget.createPayeeRule({
+                match,
+                categoryId: remembering.splits[0]!.categoryId!,
+              })
+              await budget.applyPayeeRules()
+              setRemembering(null)
+            })
+          }
+          onClose={() => setRemembering(null)}
+        />
+      )}
+      {confirm.dialog}
     </div>
+  )
+}
+
+/** Turns one categorized payee into a payee rule; the words can be trimmed to match more. */
+function RememberSheet(props: {
+  payee: string
+  categoryName: string
+  onSave: (match: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [match, setMatch] = useState(() => ruleTextFor(props.payee))
+  const [saving, setSaving] = useState(false)
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    const words = match.trim()
+    if (!words) return
+    setSaving(true)
+    try {
+      await props.onSave(words)
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <Sheet title={`Always use ${props.categoryName}`} onClose={props.onClose}>
+      <form className="stack stretch" onSubmit={(e) => void submit(e)}>
+        <label>
+          Payees containing these words
+          <input value={match} onChange={(e) => setMatch(e.target.value)} required autoFocus />
+        </label>
+        <p className="sheet-note muted">
+          New imports from {props.payee} and anything else that matches go to {props.categoryName}.
+          They still wait here for approval.
+        </p>
+        <div className="dialog-actions">
+          <button type="button" className="secondary" onClick={props.onClose}>
+            Cancel
+          </button>
+          <button type="submit" disabled={saving || !match.trim()}>
+            Save rule
+          </button>
+        </div>
+      </form>
+    </Sheet>
   )
 }
 
@@ -202,10 +262,16 @@ function InboxRow(props: {
   return (
     <>
       <tr className="txn-row">
-        <td data-label="Date">{shortDate(t.date)}</td>
-        <td data-label="Account">{props.account?.name ?? ''}</td>
-        <td data-label="Payee">{t.payee ?? ''}</td>
-        <td data-label="Category">
+        <td className="inbox-date" data-label="Date">
+          {shortDate(t.date)}
+        </td>
+        <td className="inbox-account" data-label="Account">
+          {props.account?.name ?? ''}
+        </td>
+        <td className="inbox-payee" data-label="Payee">
+          {t.payee ?? ''}
+        </td>
+        <td className="inbox-category" data-label="Category">
           {split ? (
             `Split (${t.splits.length})`
           ) : (
@@ -263,13 +329,13 @@ function InboxRow(props: {
             </div>
           )}
         </td>
-        <td className="num" data-label="Outflow">
+        <td className="num inbox-amount" data-label="Outflow">
           {t.amount < 0 ? money(-t.amount) : ''}
         </td>
-        <td className="num" data-label="Inflow">
+        <td className="num inbox-amount inbox-inflow" data-label="Inflow">
           {t.amount > 0 ? money(t.amount) : ''}
         </td>
-        <td>
+        <td className="inbox-actions">
           <button type="button" aria-label={`Approve ${label}`} onClick={props.onApprove}>
             Approve
           </button>{' '}

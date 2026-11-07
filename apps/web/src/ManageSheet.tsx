@@ -231,6 +231,7 @@ export function CategorySheet(props: {
 export function GroupSheet(props: {
   group: CategoryGroup
   all: CategoryGroup[]
+  onAddCategory: () => void
   onClose: () => void
 }) {
   const { group, all } = props
@@ -272,6 +273,9 @@ export function GroupSheet(props: {
             onRename={(name) => void act(() => budget.updateCategoryGroup(group.id, { name }))}
           />
           <Actions>
+            <button type="button" className="secondary" onClick={props.onAddCategory}>
+              Add category
+            </button>
             <button
               type="button"
               className="secondary"
