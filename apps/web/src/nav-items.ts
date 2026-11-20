@@ -57,19 +57,8 @@ export const TOP_NAV: readonly (NavLink | NavGroup)[] = [
 /** The bar along the bottom on a phone: what is used most, reachable by thumb. */
 export const TAB_NAV: readonly NavLink[] = [budget, inbox, accounts, reports]
 
-/** Everything else on a phone, behind the last tab. */
+/** Every other page on a phone, in the sheet behind the last tab (beside the accounts and Settings). */
 export const MORE_NAV: readonly NavLink[] = [bills, review, activity]
-
-/** Every page, for the drawer behind the ☰ on a phone, so nothing depends on the tab bar. */
-export const DRAWER_NAV: readonly NavLink[] = [
-  budget,
-  inbox,
-  accounts,
-  bills,
-  review,
-  reports,
-  activity,
-]
 
 export function isGroup(entry: NavLink | NavGroup): entry is NavGroup {
   return 'items' in entry

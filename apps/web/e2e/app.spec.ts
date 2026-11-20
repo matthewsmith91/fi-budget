@@ -329,8 +329,11 @@ test('a transaction can be split across categories, on desktop and on a phone', 
   // on a phone the fields stack, no sideways scrolling needed
   await page.setViewportSize({ width: 390, height: 800 })
   await page.goto('/#/budget')
-  await page.getByRole('button', { name: 'Menu' }).click()
-  await sidebar(page)
+  // no drawer on a phone: the accounts are under More
+  await expect(sidebar(page)).toBeHidden()
+  await page.getByRole('button', { name: 'More' }).click()
+  await page
+    .getByRole('dialog', { name: 'More' })
     .getByRole('link', { name: /Checking/ })
     .click()
   await page.getByRole('button', { name: '+ Add Transaction' }).click()
@@ -1771,4 +1774,45 @@ test('the budget remembers its month and folded groups, and points Ready to Assi
   await page.reload()
   await expect(page.getByRole('button', { name: 'Expand Bills' })).toBeVisible()
   await expect(page.getByRole('row', { name: /Rent/ })).toHaveCount(0)
+})
+
+test('settings show the version and check the server for new app files; the first load after an update says so', async ({
+  page,
+  context,
+}) => {
+  const { version } = JSON.parse(
+    await readFile(new URL('../../../package.json', import.meta.url), 'utf8'),
+  ) as { version: string }
+  // updates come only from the household's server, never from GitHub
+  let askedGitHub = false
+  await context.route('https://api.github.com/**', (route) => {
+    askedGitHub = true
+    return route.abort()
+  })
+  await page.goto('/')
+  await setUpHousehold(page)
+  // a first run has nothing to announce
+  await expect(page.getByText(/^Updated to version/)).toHaveCount(0)
+
+  await openSettings(page)
+  const card = page.getByRole('region', { name: 'Updates' })
+  await expect(card.getByText(`Version ${version}`, { exact: false })).toBeVisible()
+  await expect(card.getByRole('link', { name: 'Release notes' })).toHaveAttribute(
+    'href',
+    /\/releases$/,
+  )
+  await card.getByRole('button', { name: 'Check for updates' }).click()
+  await expect(card.getByText(/^Up to date\./)).toBeVisible()
+  expect(askedGitHub).toBe(false)
+
+  // pretend this device last ran an older version
+  await page.evaluate(() => localStorage.setItem('budget-fi:last-seen-version', '0.0.1'))
+  await page.reload()
+  const banner = page.getByRole('status').filter({ hasText: `Updated to version ${version}.` })
+  await expect(banner).toBeVisible()
+  await banner.getByRole('button', { name: 'Dismiss' }).click()
+  await expect(banner).toHaveCount(0)
+  // shown once: the next load is quiet
+  await page.reload()
+  await expect(page.getByText(/^Updated to version/)).toHaveCount(0)
 })

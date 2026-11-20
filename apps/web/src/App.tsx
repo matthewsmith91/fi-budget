@@ -8,7 +8,7 @@ import { budget } from './client.ts'
 import { useBudgetQuery, useRefresh } from './data.ts'
 import { DataProvider } from './DataProvider.tsx'
 import { DEMO } from './demo-mode.ts'
-import { getBackupState } from './device-settings.ts'
+import { getBackupState, takeLastSeenVersion } from './device-settings.ts'
 import { InboxView } from './InboxView.tsx'
 import { TabBar, TopNav } from './MainNav.tsx'
 import { QueueImporter } from './QueueImporter.tsx'
@@ -17,6 +17,7 @@ import { ReviewView } from './ReviewView.tsx'
 import { usePersistentStorage, useServiceWorker } from './hooks.ts'
 import { RegisterView } from './RegisterView.tsx'
 import { useRoute } from './route.ts'
+import { justUpdated, releasesPage } from './update.ts'
 import { SettingsView } from './SettingsView.tsx'
 import { SetupView } from './SetupView.tsx'
 import { Sidebar } from './Sidebar.tsx'
@@ -31,6 +32,11 @@ export default function App() {
   )
 }
 
+// Read once per page load (not in a state initializer, which strict mode runs twice): the
+// version this device ran before, if this load is the first since an update.
+const lastSeenVersion = takeLastSeenVersion(__APP_VERSION__)
+const updatedFrom = justUpdated(lastSeenVersion, __APP_VERSION__) ? lastSeenVersion : null
+
 function Shell() {
   const refresh = useRefresh()
   const status = useBudgetQuery(() => budget.getStatus())
@@ -43,8 +49,8 @@ function Shell() {
   const route = useRoute()
   const [now] = useState(() => new Date())
   const [backup, setBackup] = useState(getBackupState)
-  const [navOpen, setNavOpen] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [showUpdated, setShowUpdated] = useState(updatedFrom !== null)
 
   if (status.error) return <StartupError error={status.error} />
 
@@ -74,6 +80,7 @@ function Shell() {
         section={route.section}
         persist={persist}
         offlineReady={sw.offlineReady}
+        sw={sw}
         onBackupChanged={() => {
           setBackup(getBackupState())
           refresh()
@@ -96,15 +103,6 @@ function Shell() {
     <SyncProvider>
       <div className="shell">
         <header className="topbar">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Menu"
-            aria-expanded={navOpen}
-            onClick={() => setNavOpen(!navOpen)}
-          >
-            ☰
-          </button>
           <span>{household.data?.name ?? 'Household Budget'}</span>
         </header>
 
@@ -114,16 +112,9 @@ function Shell() {
           household={household.data ?? null}
           accounts={accounts.data ?? []}
           balances={balances.data ?? []}
-          inboxCount={inbox.data?.length ?? 0}
           route={route}
-          open={navOpen}
-          onNavigate={() => setNavOpen(false)}
-          onAddAccount={() => {
-            setNavOpen(false)
-            setAdding(true)
-          }}
+          onAddAccount={() => setAdding(true)}
         />
-        {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
 
         <main>
           {household.data && <QueueImporter />}
@@ -133,9 +124,21 @@ function Shell() {
             </div>
           )}
           <SyncBanner />
-          {sw.needRefresh && (
+          {/* Settings has its own Update now in the Updates card */}
+          {sw.needRefresh && !onSettingsRoot && (
             <div className="banner" role="status">
               A new version is ready. <button onClick={sw.applyUpdate}>Update now</button>
+            </div>
+          )}
+          {showUpdated && !sw.needRefresh && (
+            <div className="banner" role="status">
+              Updated to version {__APP_VERSION__}.{' '}
+              <a href={releasesPage} target="_blank" rel="noopener noreferrer">
+                What’s new
+              </a>{' '}
+              <button type="button" onClick={() => setShowUpdated(false)}>
+                Dismiss
+              </button>
             </div>
           )}
           {status.data?.storage === 'memory' && !DEMO && (
@@ -162,7 +165,13 @@ function Shell() {
           {content}
         </main>
 
-        <TabBar route={route} inboxCount={inbox.data?.length ?? 0} />
+        <TabBar
+          route={route}
+          inboxCount={inbox.data?.length ?? 0}
+          accounts={accounts.data ?? []}
+          balances={balances.data ?? []}
+          onAddAccount={() => setAdding(true)}
+        />
 
         <AddAccountDialog open={adding} onClose={() => setAdding(false)} />
       </div>

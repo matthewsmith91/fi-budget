@@ -23,6 +23,9 @@
   --warn-bg: #fff4d6;
   --warn-fg: #5c4200;
   --error: #b3261e;
+  /* a count waiting on the navy tab bar, the same in both themes */
+  --bubble-bg: #d93025;
+  --bubble-fg: #ffffff;
   /* sidebar */
   --side-bg: #1f2740;
   --side-fg: #dfe5f3;
@@ -148,7 +151,8 @@ button {
   cursor: pointer;
 }
 
-button:disabled {
+button:disabled,
+button[aria-disabled='true'] {
   opacity: 0.45;
   cursor: default;
 }
@@ -452,15 +456,6 @@ main {
   color: var(--side-strong);
 }
 
-.scrim {
-  display: none;
-}
-
-/* only the phone drawer lists the pages; a wide screen has the top bar */
-.drawer-pages {
-  display: none;
-}
-
 /* ---------- main navigation ---------- */
 
 /* a wide screen: links and dropdowns across the top of the page */
@@ -544,7 +539,9 @@ main {
 }
 
 .more-list a {
-  display: block;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
   padding: 0.85rem 0.25rem;
   color: var(--fg);
   border-bottom: 1px solid var(--line);
@@ -554,6 +551,62 @@ main {
 .more-list a.active {
   font-weight: 650;
   color: var(--accent);
+}
+
+.more-amount {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.more-amount.negative {
+  color: var(--error);
+}
+
+.more-section {
+  margin-top: 1.25rem;
+}
+
+.more-section h3,
+.more-section summary {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.more-section summary {
+  display: list-item;
+  cursor: pointer;
+}
+
+.more-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+.more-actions > * {
+  min-height: 2.75rem;
+}
+
+.more-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.more-button[aria-current='page'] {
+  color: var(--accent);
+  font-weight: 650;
 }
 
 .topnav .nav-badge {
@@ -646,6 +699,10 @@ main {
   .status-row a {
     display: inline-flex;
     align-items: center;
+    min-height: 2.75rem;
+  }
+
+  .update-actions button {
     min-height: 2.75rem;
   }
 }
@@ -1255,20 +1312,13 @@ tr:focus-within .row-actions {
 @media (max-width: 800px) {
   .shell {
     grid-template-columns: minmax(0, 1fr);
-    /* the sidebar is a fixed drawer here; without this a short page stretches the top bar */
+    /* without this a short page stretches the top bar */
     grid-template-rows: auto 1fr;
     align-content: start;
   }
 
   .topnav {
     display: none;
-  }
-
-  .drawer-pages {
-    display: block;
-    margin-top: 0;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--side-line);
   }
 
   .topbar,
@@ -1290,32 +1340,19 @@ tr:focus-within .row-actions {
     font-weight: 600;
   }
 
+  /* a phone has no sidebar: the accounts, Settings and Add Account are under More */
   .sidebar {
-    position: fixed;
-    z-index: 50;
-    inset: 0 auto 0 0;
-    width: min(18rem, 85vw);
-    transform: translateX(-100%);
-    transition: transform 0.18s ease-out;
-    padding-top: env(safe-area-inset-top);
+    display: none;
   }
 
-  .sidebar.open {
-    transform: none;
-  }
-
-  .scrim {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    background: var(--scrim);
+  .page-header .phone-back {
+    display: inline-block;
   }
 
   main {
     grid-row: 2;
     /* clear the tab bar along the bottom */
-    padding: 0 max(0.75rem, env(safe-area-inset-right)) calc(4.5rem + env(safe-area-inset-bottom))
+    padding: 0 max(0.75rem, env(safe-area-inset-right)) calc(6rem + env(safe-area-inset-bottom))
       max(0.75rem, env(safe-area-inset-left));
   }
 
@@ -1333,12 +1370,13 @@ tr:focus-within .row-actions {
   }
 
   .tab {
-    position: relative;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    min-height: 3.25rem;
-    padding: 0 0.25rem;
+    justify-content: flex-start;
+    gap: 0.3rem;
+    min-height: 0;
+    padding: 1.3rem 0.25rem 0.65rem;
     background: transparent;
     color: var(--side-muted);
     border: 0;
@@ -1353,10 +1391,28 @@ tr:focus-within .row-actions {
     box-shadow: inset 0 3px 0 var(--side-active);
   }
 
-  .tab .nav-badge {
+  .tab-icon-wrap {
+    position: relative;
+    display: flex;
+  }
+
+  .tab-bubble {
     position: absolute;
-    top: 0.35rem;
-    left: calc(50% + 1.1rem);
+    top: -0.35rem;
+    left: calc(100% - 0.55rem);
+    min-width: 1.15rem;
+    height: 1.15rem;
+    padding: 0 0.3rem;
+    border-radius: 999px;
+    /* a ring in the bar's colour keeps the bubble off the icon's line */
+    box-shadow: 0 0 0 2px var(--side-bg);
+    background: var(--bubble-bg);
+    color: var(--bubble-fg);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.15rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
   }
 
   .page-header {
@@ -1373,19 +1429,10 @@ tr:focus-within .row-actions {
     white-space: nowrap;
   }
 
-  .month-nav .secondary {
-    flex: none;
-    margin-left: 0.2rem;
-    padding: 0 0.6rem;
-    white-space: nowrap;
-  }
-
-  .header-figures {
-    gap: 0.6rem;
-  }
-
+  /* a phone's budget header is only the month and Ready to Assign: no "This month" or income */
+  .month-nav .secondary,
   .month-income {
-    flex: none;
+    display: none;
   }
 
   .header-figures .rta {
@@ -1846,6 +1893,13 @@ tr:focus-within .row-actions {
 
 .dialog label.check input {
   width: auto;
+}
+
+/* the way back to Settings from one of its pages; a wide screen has the settings sidebar */
+.phone-back {
+  display: none;
+  margin-bottom: 0.25rem;
+  font-size: 0.9rem;
 }
 
 .nav-badge {

@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import type { Account, AccountBalance } from '@budget-fi/core'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { money } from './format.ts'
+import { TabIcon } from './nav-icons.tsx'
 import {
   isCurrent,
   isGroup,
@@ -8,13 +11,19 @@ import {
   type NavGroup,
   type NavLink,
 } from './nav-items.ts'
-import type { Route } from './route.ts'
+import { hrefFor, type Route } from './route.ts'
 import { Sheet } from './Sheet.tsx'
 
 interface Props {
   route: Route
   /** Imported transactions waiting for approval. */
   inboxCount: number
+}
+
+interface TabBarProps extends Props {
+  accounts: Account[]
+  balances: AccountBalance[]
+  onAddAccount: () => void
 }
 
 function Badge({ count }: { count: number }) {
@@ -107,23 +116,80 @@ export function TopNav({ route, inboxCount }: Props) {
   )
 }
 
-/** The bar along the bottom on a phone: the main pages, and "More" for the rest. */
-export function TabBar({ route, inboxCount }: Props) {
+/**
+ * The bar along the bottom on a phone: the main pages, and "More" for everything else, including
+ * the accounts, Settings and Add Account (a phone has no sidebar).
+ */
+export function TabBar({ route, inboxCount, accounts, balances, onAddAccount }: TabBarProps) {
   const [more, setMore] = useState(false)
-  const moreCurrent = MORE_NAV.some((i) => isCurrent(i, route))
+  const moreCurrent =
+    MORE_NAV.some((i) => isCurrent(i, route)) ||
+    route.view === 'account' ||
+    route.view === 'settings'
+
+  const balanceOf = (id: string) => balances.find((b) => b.accountId === id)?.balance ?? 0
+  const live = accounts.filter((a) => !a.closed)
+  const onBudget = live.filter((a) => a.onBudget)
+  const tracking = live.filter((a) => !a.onBudget)
+  const closed = accounts.filter((a) => a.closed)
+  const close = () => setMore(false)
+
+  const item = (key: string, href: string, label: string, active: boolean, extra?: ReactNode) => (
+    <li key={key}>
+      <a
+        href={href}
+        className={active ? 'active' : undefined}
+        aria-current={active ? 'page' : undefined}
+        onClick={close}
+      >
+        <span>{label}</span>
+        {extra}
+      </a>
+    </li>
+  )
+
+  const accountItems = (list: Account[]) =>
+    list.map((a) => {
+      const balance = balanceOf(a.id)
+      return item(
+        a.id,
+        hrefFor.account(a.id),
+        a.name,
+        route.view === 'account' && route.id === a.id,
+        <span className={balance < 0 ? 'more-amount negative' : 'more-amount'}>
+          {money(balance)}
+        </span>,
+      )
+    })
+
+  const accountGroup = (title: string, list: Account[]) =>
+    list.length > 0 && (
+      <section className="more-section" aria-label={`${title} accounts`}>
+        <h3>
+          <span>{title}</span>
+          <span className="more-amount">
+            {money(list.reduce((sum, a) => sum + balanceOf(a.id), 0))}
+          </span>
+        </h3>
+        <ul className="plain more-list">{accountItems(list)}</ul>
+      </section>
+    )
 
   return (
     <>
       <nav className="tabbar" aria-label="Main navigation">
-        {TAB_NAV.map((item) => (
+        {TAB_NAV.map((link) => (
           <a
-            key={item.id}
-            href={item.href}
-            className={isCurrent(item, route) ? 'tab active' : 'tab'}
-            aria-current={isCurrent(item, route) ? 'page' : undefined}
+            key={link.id}
+            href={link.href}
+            className={isCurrent(link, route) ? 'tab active' : 'tab'}
+            aria-current={isCurrent(link, route) ? 'page' : undefined}
           >
-            <span className="tab-label">{item.tabLabel ?? item.label}</span>
-            {item.id === 'inbox' && <Badge count={inboxCount} />}
+            <span className="tab-icon-wrap">
+              <TabIcon id={link.id} />
+              {link.id === 'inbox' && <Bubble count={inboxCount} />}
+            </span>
+            <span className="tab-label">{link.tabLabel ?? link.label}</span>
           </a>
         ))}
         <button
@@ -132,28 +198,58 @@ export function TabBar({ route, inboxCount }: Props) {
           aria-haspopup="dialog"
           onClick={() => setMore(true)}
         >
+          <span className="tab-icon-wrap">
+            <TabIcon id="more" />
+          </span>
           <span className="tab-label">More</span>
         </button>
       </nav>
 
       {more && (
-        <Sheet title="More" onClose={() => setMore(false)}>
+        <Sheet title="More" onClose={close}>
           <ul className="plain more-list">
-            {MORE_NAV.map((item) => (
-              <li key={item.id}>
-                <a
-                  href={item.href}
-                  className={isCurrent(item, route) ? 'active' : undefined}
-                  aria-current={isCurrent(item, route) ? 'page' : undefined}
-                  onClick={() => setMore(false)}
-                >
-                  {item.label}
-                </a>
-              </li>
-            ))}
+            {MORE_NAV.map((link) => item(link.id, link.href, link.label, isCurrent(link, route)))}
           </ul>
+          {accountGroup('Budget', onBudget)}
+          {accountGroup('Tracking', tracking)}
+          {closed.length > 0 && (
+            <details className="more-section">
+              <summary>Closed</summary>
+              <ul className="plain more-list">{accountItems(closed)}</ul>
+            </details>
+          )}
+          <div className="more-actions">
+            <a
+              href={hrefFor.settings}
+              className="more-button"
+              aria-current={route.view === 'settings' ? 'page' : undefined}
+              onClick={close}
+            >
+              Settings
+            </a>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                close()
+                onAddAccount()
+              }}
+            >
+              Add Account
+            </button>
+          </div>
         </Sheet>
       )}
     </>
+  )
+}
+
+/** The inbox count on the phone's tab: a bubble on the icon's corner. */
+function Bubble({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <span className="tab-bubble" aria-label={`${count} to review`}>
+      {count > 99 ? '99+' : count}
+    </span>
   )
 }

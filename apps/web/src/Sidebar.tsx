@@ -1,28 +1,18 @@
 import type { Account, AccountBalance, Household } from '@budget-fi/core'
 import { hrefFor, SETTINGS_GROUPS, SETTINGS_SECTIONS, type Route } from './route.ts'
 import { money } from './format.ts'
-import { DRAWER_NAV, isCurrent } from './nav-items.ts'
 
 interface Props {
   household: Household | null
   accounts: Account[]
   balances: AccountBalance[]
-  /** Imported transactions waiting for approval. */
-  inboxCount: number
   route: Route
-  open: boolean
-  onNavigate: () => void
   onAddAccount: () => void
 }
 
 export function Sidebar(props: Props) {
   return props.route.view === 'settings' ? (
-    <SettingsSidebar
-      household={props.household}
-      route={props.route}
-      open={props.open}
-      onNavigate={props.onNavigate}
-    />
+    <SettingsSidebar household={props.household} route={props.route} />
   ) : (
     <BudgetSidebar {...props} />
   )
@@ -32,24 +22,21 @@ export function Sidebar(props: Props) {
 function SettingsSidebar(props: {
   household: Household | null
   route: Extract<Route, { view: 'settings' }>
-  open: boolean
-  onNavigate: () => void
 }) {
   const link = (href: string, label: string, active: boolean) => (
     <a
       href={href}
       className={active ? 'nav-item active' : 'nav-item'}
       aria-current={active ? 'page' : undefined}
-      onClick={props.onNavigate}
     >
       <span className="nav-label">{label}</span>
     </a>
   )
 
   return (
-    <aside className={props.open ? 'sidebar open' : 'sidebar'} aria-label="Settings navigation">
+    <aside className="sidebar" aria-label="Settings navigation">
       <div className="sidebar-head">
-        <a href={hrefFor.budget} className="back-link" onClick={props.onNavigate}>
+        <a href={hrefFor.budget} className="back-link">
           ← Back to budget
         </a>
         <span className="household-name">{props.household?.name ?? 'Household Budget'}</span>
@@ -73,16 +60,7 @@ function SettingsSidebar(props: {
   )
 }
 
-function BudgetSidebar({
-  household,
-  accounts,
-  balances,
-  inboxCount,
-  route,
-  open,
-  onNavigate,
-  onAddAccount,
-}: Props) {
+function BudgetSidebar({ household, accounts, balances, route, onAddAccount }: Props) {
   const balanceOf = (id: string) => balances.find((b) => b.accountId === id)?.balance ?? 0
   const live = accounts.filter((a) => !a.closed)
   const onBudget = live.filter((a) => a.onBudget)
@@ -95,7 +73,6 @@ function BudgetSidebar({
       href={href}
       className={active ? 'nav-item active' : 'nav-item'}
       aria-current={active ? 'page' : undefined}
-      onClick={onNavigate}
     >
       <span className="nav-label">{label}</span>
       {extra}
@@ -116,7 +93,7 @@ function BudgetSidebar({
     })
 
   return (
-    <aside className={open ? 'sidebar open' : 'sidebar'} aria-label="Budget navigation">
+    <aside className="sidebar" aria-label="Budget navigation">
       <div className="sidebar-head">
         <span className="household-name">{household?.name ?? 'Household Budget'}</span>
         {household && (
@@ -127,23 +104,6 @@ function BudgetSidebar({
       </div>
 
       <nav>
-        {/* a phone has no top bar, so the drawer lists the pages as well */}
-        <section className="account-section drawer-pages" aria-label="Pages">
-          <h2>Pages</h2>
-          {DRAWER_NAV.map((item) =>
-            link(
-              item.href,
-              item.label,
-              isCurrent(item, route),
-              item.id === 'inbox' && inboxCount > 0 && (
-                <span className="nav-badge" aria-label={`${inboxCount} to review`}>
-                  {inboxCount}
-                </span>
-              ),
-            ),
-          )}
-        </section>
-
         <AccountSection title="Budget" total={total(onBudget)} show={onBudget.length > 0}>
           {accountLinks(onBudget)}
         </AccountSection>
@@ -165,7 +125,6 @@ function BudgetSidebar({
           aria-label="Settings"
           title="Settings"
           aria-current={route.view === 'settings' ? 'page' : undefined}
-          onClick={onNavigate}
         >
           <GearIcon />
         </a>

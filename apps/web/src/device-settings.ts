@@ -51,3 +51,15 @@ export function getCollapsedGroups(): Set<string> {
 export function setCollapsedGroups(ids: ReadonlySet<string>): void {
   write(KEY_COLLAPSED_GROUPS, JSON.stringify([...ids]))
 }
+
+const KEY_LAST_SEEN_VERSION = 'budget-fi:last-seen-version'
+
+/**
+ * The app version this device last opened, then records `current` as seen. Returns null on a
+ * first run (nothing to announce), so "What's new" shows once per device per update.
+ */
+export function takeLastSeenVersion(current: string): string | null {
+  const last = read(KEY_LAST_SEEN_VERSION)
+  if (last !== current) write(KEY_LAST_SEEN_VERSION, current)
+  return last
+}

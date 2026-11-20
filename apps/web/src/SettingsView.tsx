@@ -12,7 +12,8 @@ import { YnabImportPanel } from './YnabImportPanel.tsx'
 import { budget } from './client.ts'
 import { useBudgetQuery } from './data.ts'
 import { getBackupState } from './device-settings.ts'
-import { useAsync, type PersistState } from './hooks.ts'
+import { useAsync, type PersistState, type ServiceWorkerState } from './hooks.ts'
+import { UpdateCard } from './UpdateCard.tsx'
 import { useSync } from './sync-context.ts'
 import { hrefFor, SETTINGS_GROUPS, SETTINGS_SECTIONS, type SettingsSection } from './route.ts'
 import { backupRow, offlineRow, protectionRow, storageRow, syncRow } from './settings-status.ts'
@@ -21,11 +22,12 @@ export function SettingsView(props: {
   section: SettingsSection
   persist: PersistState
   offlineReady: boolean
+  sw: ServiceWorkerState
   onBackupChanged: () => void
 }) {
   const { section } = props
   if (section === null) {
-    return <SettingsRoot persist={props.persist} offlineReady={props.offlineReady} />
+    return <SettingsRoot persist={props.persist} offlineReady={props.offlineReady} sw={props.sw} />
   }
   return (
     <SettingsPage section={section}>
@@ -60,6 +62,9 @@ function SettingsPage(props: {
     <div className="page">
       <header className="page-header">
         <div>
+          <a href={hrefFor.settings} className="phone-back">
+            ← Settings
+          </a>
           <h1>{label}</h1>
           <p className="muted page-blurb">{SECTION_BLURBS[props.section]}</p>
         </div>
@@ -123,7 +128,11 @@ const SECTION_BLURBS: Record<Exclude<SettingsSection, null>, string> = {
   backups: 'Export the budget, or restore it from a file.',
 }
 
-function SettingsRoot(props: { persist: PersistState; offlineReady: boolean }) {
+function SettingsRoot(props: {
+  persist: PersistState
+  offlineReady: boolean
+  sw: ServiceWorkerState
+}) {
   const status = useBudgetQuery(() => budget.getStatus())
   const sync = useSync()
   const [now] = useState(() => new Date())
@@ -174,6 +183,7 @@ function SettingsRoot(props: { persist: PersistState; offlineReady: boolean }) {
           </ul>
         </section>
       ))}
+      <UpdateCard sw={props.sw} />
       <p className="muted about">
         Schema version {status.data?.schemaVersion ?? '…'} · SQLite{' '}
         {status.data?.sqliteVersion ?? '…'}

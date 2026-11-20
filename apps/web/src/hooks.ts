@@ -23,16 +23,57 @@ export function usePersistentStorage(): PersistState {
 export function useServiceWorker() {
   const [needRefresh, setNeedRefresh] = useState(false)
   const [offlineReady, setOfflineReady] = useState(false)
+  const [canCheck, setCanCheck] = useState(false)
   const updateSW = useRef<((reload?: boolean) => Promise<void>) | null>(null)
+  const registration = useRef<ServiceWorkerRegistration | undefined>(undefined)
   useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | undefined
     updateSW.current = registerSW({
       onNeedRefresh: () => setNeedRefresh(true),
       onOfflineReady: () => setOfflineReady(true),
+      onRegisteredSW: (_url, r) => {
+        registration.current = r
+        setCanCheck(r !== undefined)
+        // The browser only looks for a new worker on a full load, and an installed app can stay
+        // open for days, so ask the server every hour as well. A new bundle still waits for
+        // "Update now".
+        timer = setInterval(() => {
+          if (navigator.onLine) void r?.update().catch(() => {})
+        }, SW_CHECK_MS)
+      },
     })
+    return () => clearInterval(timer)
   }, [])
   const applyUpdate = useCallback(() => void updateSW.current?.(true), [])
-  return { needRefresh, offlineReady, applyUpdate }
+  /**
+   * Asks the server for a newer bundle now. Resolves 'ready' once one is installed and waiting
+   * (`needRefresh` flips too) and 'current' when the server has nothing newer; rejects when the
+   * server can't be reached. Without a service worker (dev, demo) there is nothing to ask.
+   */
+  const checkServer = useCallback(async (): Promise<'ready' | 'current'> => {
+    const r = registration.current
+    if (!r) return 'current'
+    await r.update()
+    const incoming = r.installing ?? r.waiting
+    if (!incoming) return 'current'
+    if (incoming.state === 'installing') {
+      await new Promise<void>((resolve) => {
+        const settled = () => {
+          if (incoming.state === 'installing') return
+          incoming.removeEventListener('statechange', settled)
+          resolve()
+        }
+        incoming.addEventListener('statechange', settled)
+      })
+    }
+    return incoming.state === 'redundant' ? 'current' : 'ready'
+  }, [])
+  return { needRefresh, offlineReady, applyUpdate, checkServer, canCheck }
 }
+
+const SW_CHECK_MS = 60 * 60 * 1000
+
+export type ServiceWorkerState = ReturnType<typeof useServiceWorker>
 
 /** Runs an async loader; re-runs when `reload()` is called or any of `deps` change. */
 export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[] = []) {
